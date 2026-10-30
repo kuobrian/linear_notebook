@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session, selectinload
 
+from . import markdown
 from . import models as m
 from . import schemas as s
 from .db import get_session
@@ -184,6 +185,12 @@ def _milestone_out(db: Session, ms: m.Milestone) -> s.MilestoneOut:
 def _check_project_status(value: str) -> None:
     if value not in m.PROJECT_STATUSES:
         raise HTTPException(422, f"status must be one of {', '.join(m.PROJECT_STATUSES)}")
+
+
+@router.post("/markdown", response_model=s.MarkdownOut)
+def render_markdown(body: s.MarkdownIn):
+    """Render Markdown to safe HTML (used for the comment preview)."""
+    return s.MarkdownOut(html=markdown.render(body.text))
 
 
 # ---- meta / teams / users / labels ----------------------------------------

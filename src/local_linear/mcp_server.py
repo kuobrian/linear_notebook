@@ -95,7 +95,7 @@ def create_project(
         team: Team key, e.g. "ENG" (see list_teams).
         name: Project name.
         summary: One-line summary.
-        description: Longer description.
+        description: Longer description (Markdown supported).
         status: One of backlog, planned, started, paused, completed, canceled.
         priority: 0 none, 1 urgent, 2 high, 3 medium, 4 low.
         color: Hex color such as "#4cb782".

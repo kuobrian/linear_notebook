@@ -76,6 +76,10 @@ Canceled 五個狀態。想再加團隊,按側邊欄的 **+ New team**;點某個
 點 Issue 進入詳情頁。標題和說明在你點到別處時自動儲存。右側面板可設定狀態、優先度、負責人、專案、預估、到期日和標籤。
 說明下方可以新增**子 Issue**(輸入標題後按 Enter)與**留言**。留言會以側邊欄 **Signed in as** 選的人作為作者。
 
+Issue 與專案的說明、留言和文件都支援 **Markdown**:標題、粗體/斜體/~~刪除線~~、清單、`- [ ]` 任務清單、引用、
+程式碼區塊、表格和連結(單純的網址也會變成連結)。說明和文件平常顯示渲染後的結果,點一下即可編輯 Markdown 原始碼,
+點到別處自動儲存(按 **Esc** 取消)。留言有 **Preview** 預覽按鈕,**Ctrl+Enter** 送出。原始 HTML 不會被渲染,只會以文字顯示。
+
 ![Issue 詳情](docs/images/issue-detail.png)
 
 ### 專案
@@ -134,7 +138,8 @@ curl -X POST $BASE/api/labels -H "$JSON" -d '{"name":"Bug","color":"#eb5757"}'
 ```
 
 說明:優先度 `0` 無、`1` 緊急、`2` 高、`3` 中、`4` 低。`PATCH` 時送 `null` 可清空欄位(例如 `{"assignee_id": null}`),
-沒送的欄位維持不變。錯誤會以 4xx 狀態回傳 `{"detail": "..."}`。
+沒送的欄位維持不變。錯誤會以 4xx 狀態回傳 `{"detail": "..."}`。文字欄位存的是 Markdown 原始碼;詳情回應另外附上已渲染且安全的
+`description_html` / `body_html` / `content_html`,也可以用 `POST /api/markdown`(`{"text": "..."}`)渲染任意文字。
 
 ## MCP server
 
@@ -197,6 +202,6 @@ uv run pytest        # API、示範資料與 MCP 測試(記憶體內 SQLite)
 ## 限制
 
 - 單人使用,沒有登入或權限;「Signed in as」只決定留言的作者。
-- 說明、留言和文件都是純文字,不支援 Markdown 渲染。
+- Markdown 的任務清單勾選框是唯讀的,要改文字才能勾選;原始 HTML 只會以文字顯示。
 - 沒有即時協作、通知和 Git 整合。
 - 使用者、標籤和 Cycle 目前只能透過 API 管理。

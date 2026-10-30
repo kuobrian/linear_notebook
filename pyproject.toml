@@ -9,7 +9,10 @@ authors = [
 requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.162.0",
+    "linkify-it-py>=2.2.0",
+    "markdown-it-py>=4.2.0",
     "mcp>=2.3.0",
+    "mdit-py-plugins>=0.6.1",
     "pydantic>=2.14.2",
     "sqlalchemy>=2.1.6",
     "uvicorn[standard]>=0.54.0",

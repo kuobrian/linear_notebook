@@ -26,6 +26,33 @@ function svg(markup) {
   return s;
 }
 
+// Server-rendered Markdown: the API escapes raw HTML and rejects unsafe links before this is
+// assigned to innerHTML (see local_linear/markdown.py).
+function mdView(html, cls = "") {
+  const el = h("div", { class: ("md " + cls).trim() });
+  el.innerHTML = html;
+  return el;
+}
+
+// Rendered Markdown that turns into a textarea on click and saves when focus leaves it.
+function mdBlock({ source, html, placeholder, onSave, tall = false }) {
+  const view = h("div", { class: "md-view" + (html ? "" : " md-empty") });
+  if (html) view.innerHTML = html;
+  else view.textContent = placeholder;
+  const area = h("textarea", { class: "desc-input" + (tall ? " tall" : ""), placeholder, style: "display:none",
+    onblur: () => { if (area.value !== source) onSave(area.value); else show(false); },
+    onkeydown: (e) => { if (e.key === "Escape") area.value = source; } });
+  area.value = source;
+  const hint = h("div", { class: "hint", style: "display:none" }, "Markdown supported · click outside to save · Esc to cancel");
+  function show(editing) {
+    view.style.display = editing ? "none" : "";
+    area.style.display = hint.style.display = editing ? "" : "none";
+    if (editing) area.focus();
+  }
+  view.onclick = (e) => { if (!e.target.closest("a")) show(true); }; // let links be followed
+  return h("div", { class: "md-block" }, view, area, hint);
+}
+
 function toast(msg, error = false) {
   const t = $("#toast");
   t.textContent = msg;
@@ -286,9 +313,8 @@ async function renderIssue(route) {
 
   const title = h("input", { class: "title-input", value: issue.title,
     onblur: (e) => { const v = e.target.value.trim(); if (v && v !== issue.title) patch({ title: v }); } });
-  const desc = h("textarea", { class: "desc-input", placeholder: "Add description…",
-    onblur: (e) => { if (e.target.value !== issue.description) patch({ description: e.target.value }); } });
-  desc.value = issue.description;
+  const desc = mdBlock({ source: issue.description, html: issue.description_html, placeholder: "Add description…",
+    onSave: (v) => patch({ description: v }) });
 
   const subInput = h("input", { class: "field", style: "width:100%", placeholder: "Add sub-issue… (Enter)",
     onkeydown: async (e) => {
@@ -297,13 +323,25 @@ async function renderIssue(route) {
       refresh();
     } });
 
-  const commentBox = h("textarea", { class: "field", placeholder: "Leave a comment…" });
-  const send = h("button", { class: "btn primary", onclick: async () => {
+  const postComment = async () => {
     if (!commentBox.value.trim()) return;
     const me = currentUser();
     await api(`/issues/${ref}/comments`, { method: "POST", body: { body: commentBox.value, author_id: me ? me.id : null } });
     refresh();
-  } }, "Comment");
+  };
+  const commentBox = h("textarea", { class: "field", placeholder: "Leave a comment… (Markdown supported)",
+    onkeydown: (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) postComment(); } });
+  const previewBox = h("div", { class: "comment md-view", style: "display:none;width:100%" });
+  const previewBtn = h("button", { class: "btn", type: "button", onclick: async () => {
+    if (previewBox.style.display !== "none") {
+      previewBox.style.display = "none"; commentBox.style.display = ""; previewBtn.textContent = "Preview";
+      return;
+    }
+    const { html } = await api("/markdown", { method: "POST", body: { text: commentBox.value } });
+    if (html) previewBox.innerHTML = html; else previewBox.textContent = "Nothing to preview";
+    previewBox.style.display = ""; commentBox.style.display = "none"; previewBtn.textContent = "Edit";
+  } }, "Preview");
+  const send = h("button", { class: "btn primary", onclick: postComment }, "Comment");
 
   const prop = (label, node) => h("div", { class: "prop" }, h("label", {}, label), node);
   const labelToggles = h("div", { style: "display:flex;flex-wrap:wrap;gap:4px" },
@@ -337,8 +375,8 @@ async function renderIssue(route) {
           h("div", { class: "who" }, avatar(c.author), c.author ? c.author.name : "Unknown",
             h("span", {}, new Date(c.created_at).toLocaleString()),
             h("button", { class: "del", title: "Delete comment", onclick: async () => { await api("/comments/" + c.id, { method: "DELETE" }); refresh(); } }, "✕")),
-          h("div", { class: "body" }, c.body))),
-        h("div", { class: "composer" }, commentBox, send)),
+          mdView(c.body_html, "body"))),
+        h("div", { class: "composer" }, commentBox, previewBox, h("div", { style: "display:flex;gap:8px" }, previewBtn, send))),
       h("div", { class: "props" },
         prop("Status", select(team.statuses.map((s) => [s.id, s.name]), issue.status.id, (v) => patch({ status_id: +v }))),
         prop("Priority", select(state.meta.priorities.map((p) => [p.value, p.name]), issue.priority, (v) => patch({ priority: +v }))),
@@ -382,9 +420,8 @@ async function renderProject(route) {
   const patch = async (body) => { await api("/projects/" + id, { method: "PATCH", body }); refresh(); };
 
   const field = (label, node) => h("div", { class: "prop" }, h("label", {}, label), node);
-  const desc = h("textarea", { class: "desc-input", placeholder: "Write a project description…",
-    onblur: (e) => { if (e.target.value !== p.description) patch({ description: e.target.value }); } });
-  desc.value = p.description;
+  const desc = mdBlock({ source: p.description, html: p.description_html, placeholder: "Write a project description…",
+    onSave: (v) => patch({ description: v }) });
 
   const msName = h("input", { class: "field", placeholder: "New milestone name" });
   const msDate = h("input", { class: "field", type: "date" });
@@ -437,19 +474,11 @@ async function renderProject(route) {
 }
 
 function documentEditor(d, refresh) {
-  const area = h("textarea", { class: "field doc-edit", style: "display:none" });
-  area.value = d.content;
-  const preview = h("div", { class: "comment body", style: "white-space:pre-wrap;cursor:text" }, d.content || "Empty document — click to edit");
-  const show = (editing) => { area.style.display = editing ? "" : "none"; preview.style.display = editing ? "none" : ""; if (editing) area.focus(); };
-  preview.onclick = () => show(true);
-  area.onblur = async () => {
-    if (area.value !== d.content) { await api("/documents/" + d.id, { method: "PATCH", body: { content: area.value } }); refresh(); }
-    else show(false);
-  };
   return h("div", { class: "doc" },
     h("div", { class: "doc-row" }, h("strong", {}, d.title),
       h("button", { class: "back", style: "margin-left:auto", onclick: async () => { await api("/documents/" + d.id, { method: "DELETE" }); refresh(); } }, "✕")),
-    preview, area);
+    mdBlock({ source: d.content, html: d.content_html, placeholder: "Empty document — click to edit", tall: true,
+      onSave: async (v) => { await api("/documents/" + d.id, { method: "PATCH", body: { content: v } }); refresh(); } }));
 }
 
 // ---- modals ----------------------------------------------------------------

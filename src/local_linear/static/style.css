@@ -86,7 +86,34 @@ h1, h2, h3 { margin: 0; font-weight: 600; }
 .comment { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; margin-bottom: 8px; }
 .comment .who { display: flex; gap: 8px; align-items: center; color: var(--muted); font-size: 12px; margin-bottom: 4px; }
 .comment .who .del { margin-left: auto; border: 0; background: none; color: var(--muted); }
-.comment .body { white-space: pre-wrap; }
+
+/* rendered Markdown (comments use .md; descriptions and documents use .md-view) */
+:is(.md, .md-view) > :first-child { margin-top: 0; }
+:is(.md, .md-view) > :last-child { margin-bottom: 0; }
+:is(.md, .md-view) :is(h1, h2, h3, h4) { margin: 1em 0 .4em; line-height: 1.25; }
+:is(.md, .md-view) h1 { font-size: 1.5em; }
+:is(.md, .md-view) h2 { font-size: 1.25em; }
+:is(.md, .md-view) h3 { font-size: 1.1em; }
+:is(.md, .md-view) h4 { font-size: 1em; }
+:is(.md, .md-view) :is(p, ul, ol, pre, blockquote, table) { margin: 0 0 .7em; }
+:is(.md, .md-view) :is(ul, ol) { padding-left: 1.5em; }
+:is(.md, .md-view) a { color: var(--accent); text-decoration: underline; }
+:is(.md, .md-view) code { font: .92em ui-monospace, SFMono-Regular, Consolas, monospace; background: var(--hover); padding: .1em .35em; border-radius: 4px; }
+:is(.md, .md-view) pre { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; overflow-x: auto; }
+:is(.md, .md-view) pre code { background: none; padding: 0; font-size: .9em; }
+:is(.md, .md-view) blockquote { border-left: 3px solid var(--border); padding: 0 12px; color: var(--muted); }
+:is(.md, .md-view) table { border-collapse: collapse; display: block; overflow-x: auto; }
+:is(.md, .md-view) :is(th, td) { border: 1px solid var(--border); padding: 4px 10px; }
+:is(.md, .md-view) th { background: var(--panel); }
+:is(.md, .md-view) img { max-width: 100%; }
+:is(.md, .md-view) hr { border: 0; border-top: 1px solid var(--border); margin: 1em 0; }
+:is(.md, .md-view) ul.contains-task-list { list-style: none; padding-left: .3em; }
+:is(.md, .md-view) .task-list-item-checkbox { margin-right: .5em; }
+.md-view { cursor: text; min-height: 1.5em; border: 1px solid transparent; border-radius: 6px; padding: 8px; margin: 8px -8px; }
+.md-view:hover { border-color: var(--border); }
+.md-view.md-empty { color: var(--muted); }
+.hint { color: var(--muted); font-size: 11px; margin: -4px 0 4px; }
+.desc-input.tall { min-height: 200px; }
 .composer { display: flex; flex-direction: column; gap: 8px; align-items: flex-end; }
 .composer textarea { width: 100%; min-height: 70px; resize: vertical; }
 .btn { background: var(--hover); border: 1px solid var(--border); border-radius: 6px; padding: 5px 12px; }
@@ -105,7 +132,6 @@ h1, h2, h3 { margin: 0; font-weight: 600; }
 .project-page { padding: 20px 32px; max-width: 980px; }
 .project-props { display: flex; gap: 12px; flex-wrap: wrap; margin: 12px 0 16px; align-items: flex-end; }
 .ms-row, .doc-row { display: flex; align-items: center; gap: 10px; padding: 6px 0; border-bottom: 1px solid var(--border); }
-.doc-edit { width: 100%; min-height: 160px; }
 
 .overlay { position: fixed; inset: 0; background: rgba(0,0,0,.45); display: grid; place-items: start center; padding-top: 12vh; z-index: 50; }
 .modal { background: var(--bg); border: 1px solid var(--border); border-radius: 12px; width: min(620px, 94vw); box-shadow: var(--shadow); padding: 16px; display: flex; flex-direction: column; gap: 10px; }

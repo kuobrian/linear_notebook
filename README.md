@@ -84,6 +84,12 @@ Use the panel on the right for status, priority, assignee, project, estimate, du
 Below the description you can add **sub-issues** (type a title and press Enter), and write
 **comments**. Comments are posted as the person chosen under **Signed in as** in the sidebar.
 
+**Markdown** is supported in issue and project descriptions, comments and documents: headings,
+bold/italic/~~strikethrough~~, lists, `- [ ]` task lists, quotes, code blocks, tables and links
+(bare URLs are linked too). Descriptions and documents show the rendered text; click one to edit the
+Markdown source and click away to save (**Esc** cancels). Comments have a **Preview** button, and
+**Ctrl+Enter** posts. Raw HTML is never rendered, it is shown as text.
+
 ![Issue detail](docs/images/issue-detail.png)
 
 ### Projects
@@ -146,7 +152,9 @@ curl -X POST $BASE/api/labels -H "$JSON" -d '{"name":"Bug","color":"#eb5757"}'
 
 Notes: priority is `0` none, `1` urgent, `2` high, `3` medium, `4` low. Send `null` to clear a
 field in a `PATCH` (for example `{"assignee_id": null}`); fields you leave out are unchanged.
-Errors come back as `{"detail": "..."}` with a 4xx status.
+Errors come back as `{"detail": "..."}` with a 4xx status. Text fields hold Markdown source; detail
+responses also include a safe, rendered `description_html` / `body_html` / `content_html`, and
+`POST /api/markdown` with `{"text": "..."}` renders any snippet.
 
 ## MCP server
 
@@ -213,6 +221,6 @@ uv run pytest        # API, seed and MCP tests (in-memory SQLite)
 ## Limitations
 
 - Single user, no login or permissions; "Signed in as" only chooses who comments are attributed to.
-- Descriptions, comments and documents are plain text (no Markdown rendering).
+- Markdown task-list checkboxes are read-only; edit the text to tick them. Raw HTML is shown as text.
 - No real-time collaboration, notifications or Git integration.
 - Users, labels and cycles can only be managed through the API for now.

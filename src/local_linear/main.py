@@ -28,9 +28,17 @@ app.include_router(router)
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 
+# Second line of defence for rendered Markdown (which is already escaped server-side): no inline or
+# third-party scripts, no framing. Remote images are allowed so Markdown image links work.
+CSP = (
+    "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
+    "img-src 'self' https: data:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+)
+
+
 @app.get("/", include_in_schema=False)
 def index():
-    return FileResponse(STATIC_DIR / "index.html")
+    return FileResponse(STATIC_DIR / "index.html", headers={"Content-Security-Policy": CSP})
 
 
 def main() -> None:

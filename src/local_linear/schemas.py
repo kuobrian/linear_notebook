@@ -1,7 +1,8 @@
 from datetime import date, datetime
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, computed_field
 
+from . import markdown
 
 class ORM(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -43,6 +44,11 @@ class CommentOut(ORM):
     author: UserOut | None = None
     body: str
     created_at: datetime
+
+    @computed_field
+    @property
+    def body_html(self) -> str:
+        return markdown.render(self.body)
 
 
 class MilestoneOut(ORM):
@@ -96,6 +102,11 @@ class IssueDetailOut(IssueOut):
     comments: list[CommentOut] = []
     sub_issues: list[IssueOut] = []
 
+    @computed_field
+    @property
+    def description_html(self) -> str:
+        return markdown.render(self.description)
+
 
 class DocumentOut(ORM):
     id: int
@@ -104,6 +115,11 @@ class DocumentOut(ORM):
     content: str
     created_at: datetime
     updated_at: datetime
+
+    @computed_field
+    @property
+    def content_html(self) -> str:
+        return markdown.render(self.content)
 
 
 class ProjectProgress(BaseModel):
@@ -133,6 +149,19 @@ class ProjectOut(BaseModel):
 class ProjectDetailOut(ProjectOut):
     milestones: list[MilestoneOut] = []
     documents: list[DocumentOut] = []
+
+    @computed_field
+    @property
+    def description_html(self) -> str:
+        return markdown.render(self.description)
+
+
+class MarkdownIn(BaseModel):
+    text: str = Field(max_length=200_000)
+
+
+class MarkdownOut(BaseModel):
+    html: str
 
 
 # ---- input -----------------------------------------------------------------
