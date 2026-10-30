@@ -170,9 +170,16 @@ curl -X POST $BASE/api/labels -H "$JSON" -d '{"name":"Bug","color":"#eb5757"}'
 | 工具 | 功能 |
 | -- | -- |
 | `list_teams` / `create_team` | 列出團隊與代號 / 建立團隊(`ENG`) |
-| `create_project` | 建立專案:team、name、summary、description、status、priority、color、lead、起訖日期 |
+| `create_project` / `update_project` | 建立專案(team、name、summary、description、status、priority、color、lead、起訖日期) / 修改上述任一欄位 |
 | `list_projects` / `get_project` | 列出專案與進度 / 取得單一專案(含里程碑與文件) |
-| `create_issue` / `list_issues` | 建立 Issue(回傳如 `ENG-12`) / 列出與搜尋 Issue |
+| `create_issue` / `update_issue` | 建立 Issue(回傳如 `ENG-12`) / 修改標題、說明、**狀態**、優先度、**標籤**、負責人、專案、預估、到期日 |
+| `get_issue` / `list_issues` | 取得單一 Issue(含留言與子 Issue) / 列出與搜尋(可依團隊、專案、文字、狀態篩選,可設 `limit`) |
+| `add_comment` / `delete_issue` | 留言 / 永久刪除 Issue |
+| `list_labels` / `create_label` | 列出或建立標籤 |
+
+Issue 以編號指定(`ENG-12`)。狀態和標籤用**名稱**指定(`"In Progress"`、`["Bug"]`,也可以用狀態類型如 `"started"`),
+不分大小寫。不存在的狀態、標籤、使用者或日期會直接回錯誤並列出可用的值,不會被靜默忽略。`update_issue` 只會改你傳入的欄位;
+傳 `""` 代表取消負責人或清除日期,`0` 代表移出專案,`[]` 代表移除所有標籤。
 
 註冊到 Claude Code(請用絕對路徑,並改成你 clone 的位置):
 

@@ -187,9 +187,18 @@ see it in the UI.
 | Tool | What it does |
 | -- | -- |
 | `list_teams` / `create_team` | list teams and their keys / create a team (`ENG`) |
-| `create_project` | create a project: team, name, summary, description, status, priority, color, lead, start/target date |
+| `create_project` / `update_project` | create a project (team, name, summary, description, status, priority, color, lead, start/target date) / change any of those fields |
 | `list_projects` / `get_project` | list projects with progress / one project with milestones and documents |
-| `create_issue` / `list_issues` | create an issue (returns e.g. `ENG-12`) / list and search issues |
+| `create_issue` / `update_issue` | create an issue (returns e.g. `ENG-12`) / change title, description, **status**, priority, **labels**, assignee, project, estimate, due date |
+| `get_issue` / `list_issues` | one issue with comments and sub-issues / list and search (filter by team, project, text, status; `limit`) |
+| `add_comment` / `delete_issue` | comment on an issue / permanently delete it |
+| `list_labels` / `create_label` | list or create labels |
+
+Issues are addressed by identifier (`ENG-12`). Status and labels are given **by name** (`"In Progress"`,
+`["Bug"]`; a status type such as `"started"` also works), case-insensitively. An unknown status, label,
+user or date is rejected with an error that lists the valid values, never silently ignored. In
+`update_issue`, only the fields you pass change; pass `""` to unassign or clear a date, `0` to remove the
+project, and `[]` to remove all labels.
 
 Register it with Claude Code (use absolute paths, adjusted to where you cloned the repo):
 
