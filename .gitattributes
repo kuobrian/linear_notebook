@@ -1,0 +1,2 @@
+# The container runs this with bash; CRLF line endings would break it.
+*.sh text eol=lf

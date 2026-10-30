@@ -97,6 +97,27 @@ Issue 與專案的說明、留言和文件都支援 **Markdown**:標題、粗體
   Cycle 目前同樣只有 API。
 - 你的資料就是那一個 SQLite 檔案。複製它就是備份,刪掉它就是重來。
 
+## Docker
+
+一個容器同時跑網頁版和 MCP server(HTTP):
+
+```bash
+docker compose up --build -d
+```
+
+- 網頁版:<http://127.0.0.1:8000>
+- MCP 端點:`http://127.0.0.1:8765/mcp`(用 `claude mcp add --transport http local-linear http://127.0.0.1:8765/mcp` 註冊)
+- 資料存在 `local-linear-data` 這個 volume(`/data/local_linear.db`),重啟或重新 build 都不會消失。
+
+埠只開在 `127.0.0.1`,因為 MCP 端點沒有身分驗證,請不要把 8765 暴露到不信任的網路。不用 Compose 的話:
+
+```bash
+docker build -t local-linear .
+docker run -d --init -p 127.0.0.1:8000:8000 -p 127.0.0.1:8765:8765 -v local-linear-data:/data local-linear
+```
+
+兩個服務共用同一個資料庫檔案。任何一個停止,容器就會結束(Compose 會自動重啟)。
+
 ## 設定
 
 | 環境變數 | 預設值 | 用途 |

@@ -109,6 +109,28 @@ issue to a project from its detail panel.
   includes the users *Me* and *Alex* and three labels). Cycles are also API-only for now.
 - Your data is the single SQLite file. Copy it to back up, delete it to start over.
 
+## Docker
+
+One container runs both the web app and the MCP server (over HTTP):
+
+```bash
+docker compose up --build -d
+```
+
+- Web app: <http://127.0.0.1:8000>
+- MCP endpoint: `http://127.0.0.1:8765/mcp` (register with `claude mcp add --transport http local-linear http://127.0.0.1:8765/mcp`)
+- Data lives in the `local-linear-data` volume (`/data/local_linear.db`), so it survives restarts and rebuilds.
+
+Ports are published on `127.0.0.1` only, because the MCP endpoint has no authentication; do not
+expose 8765 to a network you do not trust. Without Compose:
+
+```bash
+docker build -t local-linear .
+docker run -d --init -p 127.0.0.1:8000:8000 -p 127.0.0.1:8765:8765 -v local-linear-data:/data local-linear
+```
+
+Both servers share one database file. If either stops, the container exits (and Compose restarts it).
+
 ## Configuration
 
 | Variable | Default | Purpose |

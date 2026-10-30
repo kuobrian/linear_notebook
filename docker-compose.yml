@@ -1,0 +1,14 @@
+services:
+  local-linear:
+    build: .
+    init: true
+    restart: unless-stopped
+    ports:
+      # Bound to this machine only: the MCP endpoint has no authentication.
+      - "127.0.0.1:8000:8000"   # web app
+      - "127.0.0.1:8765:8765"   # MCP over HTTP (/mcp)
+    volumes:
+      - local-linear-data:/data
+
+volumes:
+  local-linear-data:
