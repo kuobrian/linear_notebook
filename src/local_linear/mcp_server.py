@@ -1,11 +1,14 @@
 """MCP server exposing Local Linear to MCP clients over stdio.
 
-Run with ``uv run local-linear-mcp``. It talks to the same database as the web app
-(``LOCAL_LINEAR_DB``), so projects created here show up in the UI right away.
+Run with ``uv run local-linear-mcp`` (stdio) or ``uv run local-linear-mcp --transport http``
+(streamable HTTP, default http://127.0.0.1:8765/mcp). It talks to the same database as the web app
+(``LOCAL_LINEAR_DB``), so projects created here show up in the UI after a reload.
 
-stdout carries the MCP protocol, so nothing in this module may print to it.
+In stdio mode stdout carries the MCP protocol, so nothing in this module may print to it.
 """
 
+import argparse
+import sys
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import date
@@ -156,9 +159,24 @@ def list_issues(team: str | None = None, project_id: int | None = None, query: s
         return [_json(i) for i in issues]
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> None:
+    parser = argparse.ArgumentParser(prog="local-linear-mcp", description="Local Linear MCP server")
+    parser.add_argument("--transport", choices=["stdio", "http"], default="stdio",
+                        help="stdio (default, launched by the MCP client) or http (streamable HTTP)")
+    parser.add_argument("--host", default="127.0.0.1", help="http only; default is loopback")
+    parser.add_argument("--port", type=int, default=8765, help="http only (default 8765)")
+    parser.add_argument("--path", default="/mcp", help="http only: URL path of the endpoint")
+    args = parser.parse_args(argv)
+
     init_db()
-    mcp.run("stdio")
+    if args.transport == "http":
+        if args.host not in ("127.0.0.1", "localhost", "::1"):
+            # There is no authentication: anyone who can reach the port can read and write the workspace.
+            print(f"WARNING: serving without authentication on {args.host}; only do this on a trusted network.",
+                  file=sys.stderr)
+        mcp.run("streamable-http", host=args.host, port=args.port, streamable_http_path=args.path)
+    else:
+        mcp.run("stdio")
 
 
 if __name__ == "__main__":

@@ -191,6 +191,26 @@ or in any client's JSON config:
 }
 ```
 
+### Over HTTP
+
+By default the client launches the server itself over stdio. To run it as a long-lived service that
+clients connect to by URL, start it with the streamable HTTP transport:
+
+```bash
+uv run local-linear-mcp --transport http            # http://127.0.0.1:8765/mcp
+uv run local-linear-mcp --transport http --port 9000 --path /mcp
+```
+
+Set `LOCAL_LINEAR_DB` when you start it (as with the web app), then register the URL:
+
+```bash
+claude mcp add --transport http local-linear http://127.0.0.1:8765/mcp
+```
+
+Other clients that support streamable HTTP just need the same URL. The server binds to `127.0.0.1`
+only by default. There is **no authentication**: if you pass `--host 0.0.0.0` (a warning is printed),
+anyone who can reach the port can read and change your workspace, so only do that on a trusted network.
+
 Then ask the assistant, for example: *"Create a project called Billing revamp in team ENG, started,
 targeting 2026-12-31."*
 

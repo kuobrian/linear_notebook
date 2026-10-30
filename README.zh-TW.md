@@ -175,6 +175,24 @@ claude mcp add local-linear \
 }
 ```
 
+### 透過 HTTP
+
+預設是由客戶端自己用 stdio 啟動 server。若想讓它常駐、讓客戶端用網址連線,改用 streamable HTTP 傳輸:
+
+```bash
+uv run local-linear-mcp --transport http            # http://127.0.0.1:8765/mcp
+uv run local-linear-mcp --transport http --port 9000 --path /mcp
+```
+
+啟動時要設定 `LOCAL_LINEAR_DB`(和網頁版一樣),再註冊網址:
+
+```bash
+claude mcp add --transport http local-linear http://127.0.0.1:8765/mcp
+```
+
+其他支援 streamable HTTP 的客戶端只要填同一個網址。預設只綁定 `127.0.0.1`。目前**沒有身分驗證**:
+若用 `--host 0.0.0.0`(會印出警告),任何連得到該埠的人都能讀取和修改你的工作區,請只在可信任的網路使用。
+
 接著就可以對助理說,例如:*「在 ENG 團隊建立一個叫 Billing revamp 的專案,狀態 started,目標日期 2026-12-31。」*
 
 > **請讓 MCP 和網頁版使用同一個資料庫檔案。** 預設的資料庫路徑相對於工作目錄,而 MCP 客戶端啟動 server 的目錄
