@@ -129,7 +129,7 @@ h1, h2, h3 { margin: 0; font-weight: 600; }
 .project-card .sum { color: var(--muted); margin: 4px 0 10px; min-height: 18px; }
 .bar { height: 6px; border-radius: 3px; background: var(--hover); overflow: hidden; }
 .bar > span { display: block; height: 100%; background: var(--accent); }
-.project-page { padding: 20px 32px; max-width: 980px; }
+.project-page { padding: 20px 32px; }
 .project-props { display: flex; gap: 12px; flex-wrap: wrap; margin: 12px 0 16px; align-items: flex-end; }
 .ms-row, .doc-row { display: flex; align-items: center; gap: 10px; padding: 6px 0; border-bottom: 1px solid var(--border); }
 
