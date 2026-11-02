@@ -1,0 +1,31 @@
+# Run Local Linear on PostgreSQL instead of the SQLite file:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.postgres.yml up --build -d
+#
+# Set POSTGRES_PASSWORD (URL-safe characters only) in the environment or a .env file. The database
+# is only reachable from the app container; its port is not published.
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: local_linear
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-local_linear}
+      POSTGRES_DB: local_linear
+    volumes:
+      - local-linear-pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U local_linear -d local_linear"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  local-linear:
+    environment:
+      LOCAL_LINEAR_DB: postgresql://local_linear:${POSTGRES_PASSWORD:-local_linear}@postgres:5432/local_linear
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  local-linear-pg:

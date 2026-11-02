@@ -213,7 +213,7 @@ async function renderIssues(route) {
       [["list", "List"], ["board", "Board"]].map(([k, label]) =>
         h("button", { class: state.view === k ? "active" : "", onclick: () => { state.view = k; store.set("view", k); rerender(); } }, label))));
 
-  const search = h("input", { type: "search", id: "search", placeholder: "Search issues (/)", value: f.q,
+  const search = h("input", { type: "search", id: "search", placeholder: "Search title or ID (/)", value: f.q,
     onkeydown: (e) => { if (e.key === "Enter") { f.q = e.target.value.trim(); rerender(); } } });
   const filters = h("div", { class: "filters" },
     search,
@@ -358,8 +358,9 @@ async function renderIssue(route) {
       team.name, "›", issue.identifier,
       h("span", { class: "spacer", style: "flex:1" }),
       h("button", { class: "btn danger", onclick: async () => {
-        if (!confirm(`Delete ${issue.identifier}?`)) return;
+        if (!await confirmDialog(`Delete ${issue.identifier} "${issue.title}"? Its comments are deleted too, sub-issues are kept. This cannot be undone.`)) return;
         await api("/issues/" + ref, { method: "DELETE" });
+        toast(`Deleted ${issue.identifier}`);
         go("#/issues");
       } }, "Delete")),
     h("div", { class: "detail" },
@@ -414,7 +415,9 @@ async function renderProject(route) {
   const id = route.parts[1];
   renderSidebar(route);
   const p = await api("/projects/" + id);
-  const issues = await api("/issues?project_id=" + id + "&order_by=priority");
+  if (state.projectQId !== id) { state.projectQId = id; state.projectQ = ""; } // search resets per project
+  const issues = await api("/issues?project_id=" + id + "&order_by=priority"
+    + (state.projectQ ? "&q=" + encodeURIComponent(state.projectQ) : ""));
   const team = teamById(p.team_id);
   const refresh = () => renderProject(parseRoute());
   const patch = async (body) => { await api("/projects/" + id, { method: "PATCH", body }); refresh(); };
@@ -431,8 +434,9 @@ async function renderProject(route) {
     h("div", { class: "breadcrumb" }, h("button", { class: "back", onclick: () => go("#/projects") }, "← Projects"), p.name,
       h("span", { style: "flex:1" }),
       h("button", { class: "btn danger", onclick: async () => {
-        if (!confirm(`Delete project "${p.name}"? Its issues are kept.`)) return;
+        if (!await confirmDialog(`Delete project "${p.name}"? Its milestones and documents are deleted too; its issues are kept. This cannot be undone.`)) return;
         await api("/projects/" + id, { method: "DELETE" });
+        toast(`Deleted project "${p.name}"`);
         go("#/projects");
       } }, "Delete")),
     h("div", { class: "project-page" },
@@ -470,7 +474,12 @@ async function renderProject(route) {
 
       h("div", { class: "section-title" }, "Issues", h("span", {}, issues.length),
         h("button", { class: "btn", onclick: () => openIssueModal({ project: p.id, team: team.key }) }, "New issue")),
-      issues.length ? listView(issues, { defaults: { project: p.id, team: team.key } }) : h("div", { class: "empty" }, "No issues in this project.")));
+      h("div", { style: "display:flex;gap:8px;margin-bottom:8px" },
+        h("input", { class: "field", type: "search", style: "flex:1", value: state.projectQ,
+          placeholder: "Search this project's issues by title, description or ID (e.g. " + team.key + "-3), then press Enter",
+          onkeydown: (e) => { if (e.key === "Enter") { state.projectQ = e.target.value.trim(); refresh(); } } })),
+      issues.length ? listView(issues, { defaults: { project: p.id, team: team.key } })
+        : h("div", { class: "empty" }, state.projectQ ? `No issues match "${state.projectQ}".` : "No issues in this project.")));
 }
 
 function documentEditor(d, refresh) {
@@ -482,7 +491,29 @@ function documentEditor(d, refresh) {
 }
 
 // ---- modals ----------------------------------------------------------------
-function closeModal() { $("#modal-root").replaceChildren(); }
+let onModalClose = null; // set by confirmDialog so closing it any other way (Esc, backdrop) counts as "no"
+
+function closeModal() {
+  $("#modal-root").replaceChildren();
+  const pending = onModalClose;
+  onModalClose = null;
+  if (pending) pending();
+}
+
+// In-page replacement for window.confirm(): browsers and embedded webviews may suppress native
+// dialogs and answer "cancel" without showing anything, which made Delete look broken.
+function confirmDialog(message, confirmLabel = "Delete") {
+  return new Promise((resolve) => {
+    const answer = (value) => { onModalClose = null; closeModal(); resolve(value); };
+    const cancel = h("button", { class: "btn", onclick: () => answer(false) }, "Cancel");
+    modal("Are you sure?", [h("p", { style: "margin:0;line-height:1.5" }, message)], [
+      cancel,
+      h("button", { class: "btn danger", onclick: () => answer(true) }, confirmLabel),
+    ]);
+    onModalClose = () => resolve(false); // set after modal(): opening replaces any earlier dialog
+    cancel.focus(); // the safe choice has focus, so Enter cannot delete by accident
+  });
+}
 
 function modal(title, bodyNodes, actions) {
   const overlay = h("div", { class: "overlay", onmousedown: (e) => { if (e.target === overlay) closeModal(); } },

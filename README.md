@@ -14,7 +14,7 @@ server so an AI assistant such as Claude can create projects and issues for you.
 
 - [Requirements](#requirements) · [Quick start](#quick-start)
 - [Using the app](#using-the-app)
-- [Configuration](#configuration)
+- [Database](#database) · [Configuration](#configuration)
 - [REST API](#rest-api)
 - [MCP server](#mcp-server)
 - [Development](#development) · [Limitations](#limitations)
@@ -73,7 +73,8 @@ project, sub-issue and comment counts, created date and assignee.
 
 - **All / Active / Backlog** tabs narrow the list (Active means Todo and In Progress).
 - Filter by priority, assignee or label, or search titles and descriptions: type in the search box
-  (press **/** to jump to it) and press **Enter**.
+  (press **/** to jump to it) and press **Enter**. Typing a complete **issue ID** such as `ENG-12`
+  (any case) finds that issue directly.
 - Switch to **Board** to see one column per status. **Drag a card to another column to change its
   status.** The **+** on a column or group creates an issue in that status.
 
@@ -92,13 +93,17 @@ Markdown source and click away to save (**Esc** cancels). Comments have a **Prev
 
 ![Issue detail](docs/images/issue-detail.png)
 
+To remove an issue, open it and click **Delete** (top right), then confirm in the dialog. Its comments
+are deleted with it; its sub-issues are kept. Projects are deleted the same way from their page.
+
 ### Projects
 
 **Projects** lists every project as a card with its status, lead and a progress bar (completed
 issues out of all non-canceled issues). Open one to edit its status, priority, lead and start/target
 dates, write a description, add **milestones**, and keep **documents** (click a document to edit it;
 it saves when you click away). Issues in the project are listed at the bottom, and you can assign an
-issue to a project from its detail panel.
+issue to a project from its detail panel. The project's issue list has its own search box (title,
+description or issue ID, then **Enter**).
 
 ![Project page](docs/images/project.png)
 
@@ -135,8 +140,45 @@ Both servers share one database file. If either stops, the container exits (and 
 
 | Variable | Default | Purpose |
 | -- | -- | -- |
-| `LOCAL_LINEAR_DB` | `sqlite:///local_linear.db` | SQLAlchemy database URL. The default path is relative to the directory you start the app from. |
+| `LOCAL_LINEAR_DB` | `sqlite:///local_linear.db` | Database URL: SQLite (default) or PostgreSQL, see [Database](#database). The default SQLite path is relative to the directory you start the app from. |
 | `LOCAL_LINEAR_SEED` | `1` | Set to `0` to skip creating demo data on an empty database. |
+
+## Database
+
+Data is stored in a real relational database. **SQLite** (a single file, `local_linear.db`) is the
+default and needs nothing installed. **PostgreSQL** is supported for multi-process or server use:
+set `LOCAL_LINEAR_DB` to its URL for the web app and the MCP server.
+
+```bash
+# create an empty database first (once)
+createdb local_linear
+
+# macOS / Linux
+export LOCAL_LINEAR_DB=postgresql://user:password@localhost:5432/local_linear
+# Windows PowerShell
+$env:LOCAL_LINEAR_DB = "postgresql://user:password@localhost:5432/local_linear"
+
+uv run local-linear
+```
+
+`postgres://` and `postgresql://` URLs both work (the psycopg 3 driver is installed with the project).
+Special characters in the password must be URL-encoded. The tables are created automatically on first
+start, and demo data is added to an empty database unless `LOCAL_LINEAR_SEED=0`.
+
+Things to know:
+
+- There are **no schema migrations** yet: tables are created if missing, but changing the schema of an
+  existing database is not handled.
+- There is **no built-in tool to move data from SQLite to PostgreSQL**; a new Postgres database starts empty.
+- Issue numbers (`ENG-12`) stay unique when the web app and the MCP server create issues at the same
+  time: on PostgreSQL the team's row is locked while a number is assigned.
+
+With Docker, add the PostgreSQL override file (the database runs in its own container with its own
+volume and is not published on a host port):
+
+```bash
+POSTGRES_PASSWORD=choose-a-password docker compose -f docker-compose.yml -f docker-compose.postgres.yml up --build -d
+```
 
 ## REST API
 
@@ -257,6 +299,15 @@ targeting 2026-12-31."*
 ```bash
 uv run pytest        # API, seed and MCP tests (in-memory SQLite)
 ```
+
+To run the same suite against PostgreSQL, give it an empty scratch database whose name contains
+`test` (every table in it is dropped and recreated for each test, so any other name is refused):
+
+```bash
+LOCAL_LINEAR_TEST_DB=postgresql://user:password@localhost:5432/local_linear_test uv run pytest
+```
+
+That run also enables a concurrency test of issue numbering that is skipped on SQLite.
 
 | Path | What |
 | -- | -- |

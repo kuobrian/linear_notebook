@@ -25,7 +25,17 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(title="Local Linear", lifespan=lifespan)
 app.include_router(router)
-app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+class RevalidatingStaticFiles(StaticFiles):
+    """Static files that browsers re-check on every load (cheap, ETag based), so an upgraded
+    app.js/style.css is picked up immediately instead of a stale cached copy."""
+
+    async def get_response(self, path, scope):
+        response = await super().get_response(path, scope)
+        response.headers["Cache-Control"] = "no-cache"
+        return response
+
+
+app.mount("/static", RevalidatingStaticFiles(directory=STATIC_DIR), name="static")
 
 
 # Second line of defence for rendered Markdown (which is already escaped server-side): no inline or

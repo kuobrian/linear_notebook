@@ -1,7 +1,8 @@
+import re
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
-from sqlalchemy import func, or_, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session, selectinload
 
 from . import markdown
@@ -10,6 +11,8 @@ from . import schemas as s
 from .db import get_session
 
 router = APIRouter(prefix="/api")
+
+ISSUE_ID = re.compile(r"^([A-Za-z][A-Za-z0-9]*)-(\d+)$")
 
 DEFAULT_STATUSES = [
     ("Backlog", "backlog", "#bec2c8"),
@@ -21,8 +24,15 @@ DEFAULT_STATUSES = [
 
 
 # ---- helpers ---------------------------------------------------------------
-def _team(db: Session, key: str) -> m.Team:
-    team = db.scalar(select(m.Team).where(func.upper(m.Team.key) == key.upper()))
+def _team(db: Session, key: str, lock: bool = False) -> m.Team:
+    stmt = select(m.Team).where(func.upper(m.Team.key) == key.upper())
+    if lock:
+        # Row lock (no-op on SQLite, which already serialises writers). On PostgreSQL it makes
+        # concurrent creators of issues in one team wait for each other, so numbers stay unique.
+        # populate_existing: if this session already loaded the team, re-read the counter that
+        # was current when the lock was granted instead of keeping the stale copy.
+        stmt = stmt.with_for_update().execution_options(populate_existing=True)
+    team = db.scalar(stmt)
     if not team:
         raise HTTPException(404, f"Team {key!r} not found")
     return team
@@ -307,8 +317,13 @@ def list_issues(
     if parent_id is not None:
         stmt = stmt.where(m.Issue.parent_id == parent_id)
     if q:
-        like = f"%{q}%"
-        stmt = stmt.where(or_(m.Issue.title.ilike(like), m.Issue.description.ilike(like)))
+        like = f"%{q.strip()}%"
+        conditions = [m.Issue.title.ilike(like), m.Issue.description.ilike(like)]
+        ident = ISSUE_ID.match(q.strip())
+        if ident:  # "DEMO-7" also finds that exact issue, whatever its title says
+            team_ids = select(m.Team.id).where(func.upper(m.Team.key) == ident.group(1).upper())
+            conditions.append(and_(m.Issue.team_id.in_(team_ids), m.Issue.number == int(ident.group(2))))
+        stmt = stmt.where(or_(*conditions))
     order = {
         "updated": m.Issue.updated_at.desc(),
         "created": m.Issue.created_at.desc(),
@@ -322,7 +337,7 @@ def list_issues(
 
 @router.post("/issues", response_model=s.IssueDetailOut, status_code=201)
 def create_issue(body: s.IssueIn, db: Session = Depends(get_session)):
-    team = _team(db, body.team)
+    team = _team(db, body.team, lock=True)  # holds the issue-number counter until commit
     if body.status_id is not None:
         status = _get(db, m.Status, body.status_id, "Status")
     else:

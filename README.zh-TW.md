@@ -13,7 +13,7 @@ server,讓 Claude 這類 AI 助理可以幫你建立專案和 Issue。
 
 - [系統需求](#系統需求) · [快速開始](#快速開始)
 - [使用說明](#使用說明)
-- [設定](#設定)
+- [資料庫](#資料庫) · [設定](#設定)
 - [REST API](#rest-api)
 - [MCP server](#mcp-server)
 - [開發](#開發) · [限制](#限制)
@@ -68,7 +68,7 @@ Canceled 五個狀態。想再加團隊,按側邊欄的 **+ New team**;點某個
 ![列表檢視](docs/images/issues-list.png)
 
 - 上方 **All / Active / Backlog** 分頁可縮小範圍(Active 指 Todo 和 In Progress)。
-- 可依優先度、負責人、標籤篩選,也能搜尋標題和說明:在搜尋框輸入(按 **/** 可直接跳到搜尋框)後按 **Enter**。
+- 可依優先度、負責人、標籤篩選,也能搜尋標題和說明:在搜尋框輸入(按 **/** 可直接跳到搜尋框)後按 **Enter**。輸入完整的 **Issue 編號**(如 `ENG-12`,不分大小寫)會直接找到那個 Issue。
 - 切到 **Board** 會看到每個狀態一欄。**把卡片拖到另一欄就能改變狀態。** 欄位或群組上的 **+** 會在該狀態下建立 Issue。
 
 ### 處理一個 Issue
@@ -82,11 +82,14 @@ Issue 與專案的說明、留言和文件都支援 **Markdown**:標題、粗體
 
 ![Issue 詳情](docs/images/issue-detail.png)
 
+要移除 Issue,打開它後點右上角的 **Delete**,並在對話框中確認。它的留言會一併刪除,子 Issue 會保留。
+專案也是從專案頁用同樣方式刪除。
+
 ### 專案
 
 **Projects** 以卡片列出所有專案,顯示狀態、負責人和進度條(已完成 Issue 佔所有未取消 Issue 的比例)。
 點進專案可編輯狀態、優先度、負責人和起訖日期,寫說明、新增**里程碑**,並維護**文件**(點文件即可編輯,點到別處時自動儲存)。
-專案內的 Issue 會列在頁面下方,也可以在 Issue 詳情頁把它指派到某個專案。
+專案內的 Issue 會列在頁面下方,也可以在 Issue 詳情頁把它指派到某個專案。專案內的 Issue 列表有自己的搜尋框(標題、說明或 Issue 編號,按 **Enter**)。
 
 ![專案頁](docs/images/project.png)
 
@@ -122,8 +125,40 @@ docker run -d --init -p 127.0.0.1:8000:8000 -p 127.0.0.1:8765:8765 -v local-line
 
 | 環境變數 | 預設值 | 用途 |
 | -- | -- | -- |
-| `LOCAL_LINEAR_DB` | `sqlite:///local_linear.db` | SQLAlchemy 資料庫網址。預設路徑相對於你啟動程式的目錄。 |
+| `LOCAL_LINEAR_DB` | `sqlite:///local_linear.db` | 資料庫網址:SQLite(預設)或 PostgreSQL,見[資料庫](#資料庫)。SQLite 預設路徑相對於你啟動程式的目錄。 |
 | `LOCAL_LINEAR_SEED` | `1` | 設成 `0` 則在空資料庫上不建立示範資料。 |
+
+## 資料庫
+
+資料存在真正的關聯式資料庫裡。預設是 **SQLite**(單一檔案 `local_linear.db`),不需要另外安裝任何東西。
+若要多程序或伺服器使用,支援 **PostgreSQL**:替網頁版和 MCP server 設定 `LOCAL_LINEAR_DB` 為它的網址。
+
+```bash
+# 先建立一個空的資料庫(只需一次)
+createdb local_linear
+
+# macOS / Linux
+export LOCAL_LINEAR_DB=postgresql://user:password@localhost:5432/local_linear
+# Windows PowerShell
+$env:LOCAL_LINEAR_DB = "postgresql://user:password@localhost:5432/local_linear"
+
+uv run local-linear
+```
+
+`postgres://` 和 `postgresql://` 開頭的網址都可以(專案已內含 psycopg 3 驅動)。密碼中的特殊字元要做 URL 編碼。
+資料表會在第一次啟動時自動建立;空資料庫預設會放入示範資料,除非設 `LOCAL_LINEAR_SEED=0`。
+
+注意事項:
+
+- **目前沒有資料表結構的遷移(migration)機制**:缺少的表會自動建立,但已存在資料庫的結構變更不會處理。
+- **沒有內建工具把 SQLite 的資料搬到 PostgreSQL**;新的 Postgres 資料庫一開始是空的。
+- 網頁版和 MCP server 同時建立 Issue 時,編號(`ENG-12`)仍會保持唯一:在 PostgreSQL 上,指派編號期間會鎖住該團隊的資料列。
+
+使用 Docker 時,再加上 PostgreSQL 的覆寫檔(資料庫跑在自己的容器和 volume 裡,不會對外開放主機埠):
+
+```bash
+POSTGRES_PASSWORD=choose-a-password docker compose -f docker-compose.yml -f docker-compose.postgres.yml up --build -d
+```
 
 ## REST API
 
@@ -233,6 +268,15 @@ claude mcp add --transport http local-linear http://127.0.0.1:8765/mcp
 ```bash
 uv run pytest        # API、示範資料與 MCP 測試(記憶體內 SQLite)
 ```
+
+要用 PostgreSQL 跑同一套測試,請給它一個**名稱含 `test`** 的空白測試資料庫(每個測試都會清空並重建裡面所有資料表,
+所以名稱不含 `test` 的資料庫會被拒絕):
+
+```bash
+LOCAL_LINEAR_TEST_DB=postgresql://user:password@localhost:5432/local_linear_test uv run pytest
+```
+
+這樣跑時還會啟用一個在 SQLite 下會被跳過的「Issue 編號併發」測試。
 
 | 路徑 | 內容 |
 | -- | -- |

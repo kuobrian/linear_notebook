@@ -10,9 +10,26 @@ class Base(DeclarativeBase):
     pass
 
 
+def normalize_url(url: str) -> str:
+    """Accept the usual postgres:// and postgresql:// URLs and use the psycopg 3 driver for them."""
+    for prefix in ("postgres://", "postgresql://"):
+        if url.startswith(prefix):
+            return "postgresql+psycopg://" + url[len(prefix):]
+    return url
+
+
 def make_engine(url: str | None = None) -> Engine:
-    url = url or os.getenv("LOCAL_LINEAR_DB", "sqlite:///local_linear.db")
-    kwargs = {"connect_args": {"check_same_thread": False}} if url.startswith("sqlite") else {}
+    """Engine for SQLite (default, a local file) or PostgreSQL, chosen by the URL.
+
+    LOCAL_LINEAR_DB examples: ``sqlite:///local_linear.db``,
+    ``postgresql://user:password@localhost:5432/local_linear``.
+    """
+    url = normalize_url(url or os.getenv("LOCAL_LINEAR_DB", "sqlite:///local_linear.db"))
+    kwargs: dict = {}
+    if url.startswith("sqlite"):
+        kwargs["connect_args"] = {"check_same_thread": False}
+    else:
+        kwargs["pool_pre_ping"] = True  # survive restarts of the database server
     if url in ("sqlite://", "sqlite:///:memory:"):
         from sqlalchemy.pool import StaticPool
 

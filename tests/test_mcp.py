@@ -8,14 +8,13 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from local_linear import mcp_server
 from local_linear import models as m
-from local_linear.db import init_db, make_engine
+from conftest import fresh_engine
 from local_linear.seed import seed
 
 
 @pytest.fixture()
 def factory(monkeypatch):
-    engine = make_engine("sqlite://")
-    init_db(engine)
+    engine = fresh_engine()
     factory = sessionmaker(bind=engine, expire_on_commit=False)
     with factory() as db:
         seed(db)  # team DEMO, users Me/Alex, one project
@@ -97,8 +96,7 @@ def test_create_project_errors_are_tool_errors(factory, args, fragment):
 
 
 def test_create_team_then_project_on_empty_workspace(monkeypatch):
-    engine = make_engine("sqlite://")
-    init_db(engine)  # no seed: no teams yet
+    engine = fresh_engine()  # no seed: no teams yet
     monkeypatch.setattr(mcp_server, "SessionLocal", sessionmaker(bind=engine, expire_on_commit=False))
     assert structured(call("list_teams")) == []
     assert "not found" in call("create_project", team="ENG", name="P").content[0].text

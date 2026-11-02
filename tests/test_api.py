@@ -156,3 +156,63 @@ def test_meta_and_index(client, team):
     index = client.get("/")
     assert index.status_code == 200 and "Local Linear" in index.text
     assert client.get("/api/nope").status_code == 404
+
+
+def test_search_matches_issue_identifier(client, team):
+    client.post("/api/teams", json={"key": "OPS", "name": "Ops"})
+    pid = client.post("/api/projects", json={"team": "ENG", "name": "P"}).json()["id"]
+    make_issue(client, title="first", project_id=pid)                      # ENG-1
+    make_issue(client, title="second")                                     # ENG-2
+    client.post("/api/issues", json={"team": "OPS", "title": "ops first"})  # OPS-1
+
+    ids = lambda **params: [i["identifier"] for i in client.get("/api/issues", params=params).json()]  # noqa: E731
+    assert ids(q="ENG-2") == ["ENG-2"]
+    assert ids(q="eng-2") == ["ENG-2"]            # case-insensitive
+    assert ids(q="  ENG-1 ") == ["ENG-1"]         # surrounding spaces are ignored
+    assert ids(q="OPS-1") == ["OPS-1"]            # same number in another team is not confused
+    assert ids(q="ENG-99") == []
+    assert ids(q="ENG-") == [] and ids(q="ENG-1x") == []   # only a complete id matches by id
+    assert ids(q="ENG-1", project_id=pid) == ["ENG-1"]      # works together with other filters
+    assert ids(q="ENG-2", project_id=pid) == []
+    assert sorted(ids(q="first")) == ["ENG-1", "OPS-1"]     # text search is unchanged
+
+
+def test_search_by_id_also_finds_text_mentions(client, team):
+    make_issue(client, title="blocks ENG-2 from shipping")  # ENG-1, mentions ENG-2
+    make_issue(client, title="plain")                       # ENG-2
+    assert sorted(i["identifier"] for i in client.get("/api/issues", params={"q": "ENG-2"}).json()) == ["ENG-1", "ENG-2"]
+
+
+def test_static_files_are_revalidated_not_cached_blindly(client):
+    r = client.get("/static/app.js")
+    assert r.status_code == 200
+    assert r.headers["cache-control"] == "no-cache" and r.headers.get("etag")
+    # a conditional request is answered with 304, so revalidation costs no re-download
+    assert client.get("/static/app.js", headers={"If-None-Match": r.headers["etag"]}).status_code == 304
+
+
+def test_delete_issue_in_every_kind_of_situation(client, team):
+    user = client.post("/api/users", json={"name": "Sam"}).json()
+    label = client.post("/api/labels", json={"name": "Bug"}).json()
+    project = client.post("/api/projects", json={"team": "ENG", "name": "P"}).json()
+    milestone = client.post(f"/api/projects/{project['id']}/milestones", json={"name": "M"}).json()
+    cycle = client.post("/api/cycles", json={"team": "ENG", "starts_at": "2026-01-01", "ends_at": "2026-01-14"}).json()
+
+    loaded = make_issue(
+        client, title="loaded", label_ids=[label["id"]], assignee_id=user["id"], project_id=project["id"],
+        milestone_id=milestone["id"], cycle_id=cycle["id"], status_id=status_id(team, "completed"),
+    )
+    client.post(f"/api/issues/{loaded['identifier']}/comments", json={"body": "x"})
+    parent = make_issue(client, title="parent")
+    child = make_issue(client, title="child", parent_id=parent["id"])
+
+    assert client.delete(f"/api/issues/{loaded['identifier']}").status_code == 204
+    assert client.delete(f"/api/issues/{parent['identifier']}").status_code == 204
+    # the sub-issue survives its parent and becomes a top-level issue
+    assert client.get(f"/api/issues/{child['identifier']}").json()["parent_id"] is None
+    assert client.delete(f"/api/issues/{child['identifier']}").status_code == 204
+    assert client.get("/api/issues").json() == []
+    # the project, label, user and milestone the issue pointed at are untouched
+    assert client.get(f"/api/projects/{project['id']}").json()["milestones"][0]["issue_count"] == 0
+    assert [x["name"] for x in client.get("/api/labels").json()] == ["Bug"]
+    assert [u["name"] for u in client.get("/api/users").json()] == ["Sam"]

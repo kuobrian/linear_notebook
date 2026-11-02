@@ -2,13 +2,12 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from local_linear import models as m
-from local_linear.db import init_db, make_engine
+from conftest import fresh_engine
 from local_linear.seed import seed
 
 
 def test_seed_populates_once():
-    engine = make_engine("sqlite://")
-    init_db(engine)
+    engine = fresh_engine()
     with Session(engine) as db:
         seed(db)
         seed(db)  # idempotent: second call is a no-op
