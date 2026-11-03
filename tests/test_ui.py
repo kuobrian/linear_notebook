@@ -6,6 +6,7 @@ started the tests are skipped.
 
 import itertools
 import os
+import re
 import socket
 import subprocess
 import sys
@@ -306,3 +307,131 @@ def test_theme_choice_is_remembered(page, base_url, team):
     page.reload()
     page.wait_for_selector("h1")
     assert page.evaluate("document.documentElement.dataset.theme") == chosen
+
+
+# ---- known bugs (found by the browser QA pass) ------------------------------------------------
+# Each test reproduces a bug that is tracked in Linear and not fixed yet. xfail(strict=True) keeps CI
+# green now and turns red ("XPASS(strict)") the moment the bug is fixed, which is the cue to delete the
+# marker. `raises=AssertionError` means a timeout or a broken test still fails loudly.
+def known_bug(issue):
+    return pytest.mark.xfail(strict=True, raises=AssertionError, reason=issue)
+
+
+def add_cycle(base_url, team, start="2026-01-01", end="2026-01-14"):
+    r = httpx.post(base_url + "/api/cycles", json={"team": team["key"], "starts_at": start, "ends_at": end})
+    assert r.status_code == 201, r.text
+    return r.json()
+
+
+def accessible(page, selector):
+    """Elements matching selector that have neither an aria-label nor an associated <label>."""
+    return page.evaluate(
+        """(sel) => [...document.querySelectorAll(sel)]
+            .filter(e => !e.getAttribute('aria-label') && !(e.labels && e.labels.length))
+            .map(e => e.tagName.toLowerCase() + '.' + e.className)""",
+        selector,
+    )
+
+
+@known_bug("KUO-14")
+def test_list_says_when_it_shows_only_part_of_the_issues(page, base_url, team):
+    with httpx.Client(base_url=base_url) as c:  # one connection: 501 requests take a few seconds
+        status = next(s["id"] for s in team["statuses"] if s["type"] == "backlog")
+        for i in range(501):
+            assert c.post("/api/issues", json={"team": team["key"], "title": f"Bulk {i}", "status_id": status}).status_code == 201
+    open_team(page, base_url, team)
+    page.wait_for_selector(".row")
+    text = page.locator("#main").inner_text()
+    assert page.locator(".row").count() >= 501 or re.search(r"showing|more|truncat|first \d+|load", text, re.I)
+
+
+def test_rejected_cycle_edit_restores_the_input(page, base_url, team):
+    cycle = add_cycle(base_url, team)
+    page.goto(f"{base_url}/#/cycles?team={team['key']}")
+    end = page.locator(f"[data-cycle='{cycle['id']}'] .cycle-end")
+    end.wait_for()
+    end.fill("2025-12-01")  # before the start: the API answers 422
+    end.press("Tab")
+    page.wait_for_selector("#toast.error")
+    saved = httpx.get(base_url + "/api/cycles", params={"team": team["key"]}).json()[0]["ends_at"]
+    assert saved == cycle["ends_at"]  # the API really refused the edit
+    playwright_api.expect(end).to_have_value(saved)  # the page re-renders and shows what is saved
+
+
+@known_bug("KUO-16")
+def test_validation_error_is_not_an_uncaught_exception(browser, base_url, team):
+    context = browser.new_context(bypass_csp=True)  # not the `page` fixture: it fails the test on page errors
+    page = context.new_page()
+    page.set_default_timeout(5000)
+    errors = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    try:
+        page.goto(f"{base_url}/#/cycles?team={team['key']}")
+        page.wait_for_selector("#cycle-start")
+        page.locator("#cycle-start").fill("2026-12-10")
+        page.locator("#cycle-end").fill("2026-12-01")
+        page.get_by_role("button", name="Add cycle").click()
+        page.wait_for_selector("#toast.error")
+        page.wait_for_timeout(200)
+        assert not errors
+    finally:
+        context.close()
+
+
+@known_bug("KUO-17")
+def test_unknown_issue_shows_a_not_found_page(page, base_url, team):
+    page.goto(f"{base_url}/#/cycles?team={team['key']}")
+    page.wait_for_selector("#cycle-start")
+    page.goto(f"{base_url}/#/issue/NOPE-1")
+    page.wait_for_selector("#toast.error")
+    assert re.search(r"not found", page.locator("#main").inner_text(), re.I)  # not the stale Cycles page
+
+
+@known_bug("KUO-18")
+def test_cycles_page_inputs_have_accessible_names(page, base_url, team):
+    add_cycle(base_url, team)
+    page.goto(f"{base_url}/#/cycles?team={team['key']}")
+    page.wait_for_selector("[data-cycle]")
+    assert accessible(page, "#main input, #main select") == []
+
+
+@known_bug("KUO-19")
+def test_cycles_page_does_not_request_issues_per_cycle(page, base_url, team):
+    for _ in range(5):
+        add_cycle(base_url, team)
+    requests = []
+    page.on("request", lambda r: requests.append(r.url) if "cycle_id=" in r.url else None)
+    page.goto(f"{base_url}/#/cycles?team={team['key']}")
+    page.wait_for_selector("[data-cycle]")
+    page.wait_for_load_state("networkidle")
+    assert len(requests) <= 1
+
+
+@known_bug("KUO-20")
+def test_selects_have_accessible_names(page, base_url, team):
+    add_issue(base_url, team, "First")
+    open_team(page, base_url, team)
+    assert accessible(page, "select") == []
+
+
+@known_bug("KUO-20")
+def test_issue_rows_are_keyboard_focusable(page, base_url, team):
+    add_issue(base_url, team, "First")
+    open_team(page, base_url, team)
+    page.wait_for_selector(".row")
+    row = page.locator(".row").first
+    assert row.get_attribute("tabindex") is not None or row.get_attribute("role") in ("button", "link")
+
+
+@known_bug("KUO-21")
+def test_dates_follow_the_interface_language(browser, base_url, team):
+    context = browser.new_context(bypass_csp=True, locale="zh-TW")  # English interface, Chinese browser
+    page = context.new_page()
+    page.set_default_timeout(5000)
+    try:
+        add_issue(base_url, team, "First")
+        open_team(page, base_url, team)
+        page.wait_for_selector(".row")
+        assert "月" not in page.locator(".row").first.inner_text()
+    finally:
+        context.close()

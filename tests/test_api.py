@@ -447,3 +447,36 @@ def test_copying_into_the_database_in_use_is_refused(client, team):
 
     r = client.post("/api/database/copy", json={"url": TEST_DB or "sqlite://"})
     assert r.status_code == 409 and "already using" in r.json()["detail"]
+
+
+# ---- known bugs (found by the browser QA pass), see the note above test_ui.py's known_bug --------
+# xfail(strict=True): green while the bug exists, red (XPASS) once it is fixed, then drop the marker.
+import pytest  # noqa: E402
+
+
+def known_bug(issue):
+    return pytest.mark.xfail(strict=True, raises=AssertionError, reason=issue)
+
+
+@known_bug("KUO-22")
+def test_responses_carry_basic_security_headers(client):
+    for path in ("/api/teams", "/static/app.js"):
+        r = client.get(path)
+        assert r.headers.get("x-content-type-options") == "nosniff", path
+        assert r.headers.get("referrer-policy"), path
+
+
+@known_bug("KUO-23")
+def test_cycle_dates_must_be_in_a_sane_range(client, team):
+    body = {"team": "ENG", "starts_at": "0001-01-01", "ends_at": "9999-12-31"}
+    assert client.post("/api/cycles", json=body).status_code == 422
+
+
+@known_bug("KUO-24")
+def test_favicon_does_not_404(client):
+    assert client.get("/favicon.ico").status_code != 404
+
+
+@known_bug("KUO-24")
+def test_static_files_are_compressed(client):
+    assert client.get("/static/app.js", headers={"Accept-Encoding": "gzip"}).headers.get("content-encoding") == "gzip"

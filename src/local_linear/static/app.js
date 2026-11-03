@@ -328,7 +328,8 @@ async function renderIssue(route) {
   const projects = await api("/projects?team=" + team.key);
   const cycles = await api("/cycles?team=" + team.key);
   const refresh = () => renderIssue(parseRoute());
-  const patch = async (body) => { await api("/issues/" + ref, { method: "PATCH", body }); refresh(); };
+  // A rejected edit is already toasted by api(); re-rendering anyway puts the saved value back in the input.
+  const patch = async (body) => { await api("/issues/" + ref, { method: "PATCH", body }).catch(() => {}); refresh(); };
 
   const title = h("input", { class: "title-input", value: issue.title,
     onblur: (e) => { const v = e.target.value.trim(); if (v && v !== issue.title) patch({ title: v }); } });
@@ -431,7 +432,7 @@ async function renderCycles(route) {
 
   const card = async (c) => {
     const issues = await api("/issues?cycle_id=" + c.id + "&order_by=priority");
-    const patch = async (body) => { await api("/cycles/" + c.id, { method: "PATCH", body }); refresh(); };
+    const patch = async (body) => { await api("/cycles/" + c.id, { method: "PATCH", body }).catch(() => {}); refresh(); };
     return h("div", { class: "doc", "data-cycle": c.id },
       h("div", { class: "doc-row" },
         h("strong", {}, `Cycle ${c.number}`),
@@ -485,7 +486,7 @@ async function renderProject(route) {
     + (state.projectQ ? "&q=" + encodeURIComponent(state.projectQ) : ""));
   const team = teamById(p.team_id);
   const refresh = () => renderProject(parseRoute());
-  const patch = async (body) => { await api("/projects/" + id, { method: "PATCH", body }); refresh(); };
+  const patch = async (body) => { await api("/projects/" + id, { method: "PATCH", body }).catch(() => {}); refresh(); };
 
   const field = (label, node) => h("div", { class: "prop" }, h("label", {}, label), node);
   const desc = mdBlock({ source: p.description, html: p.description_html, placeholder: "Write a project description…",
