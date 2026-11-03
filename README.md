@@ -142,6 +142,7 @@ Both servers share one database file. If either stops, the container exits (and 
 | -- | -- | -- |
 | `LOCAL_LINEAR_DB` | `sqlite:///local_linear.db` | Database URL: SQLite (default) or PostgreSQL, see [Database](#database). The default SQLite path is relative to the directory you start the app from. |
 | `LOCAL_LINEAR_SEED` | `1` | Set to `0` to skip creating demo data on an empty database. |
+| `LOCAL_LINEAR_ALLOWED_HOSTS` | (none) | Extra host names, comma separated, the web app and MCP server answer to besides `127.0.0.1`, `localhost` and `[::1]`. Requests with any other `Host` header get `421`, which stops other websites from driving the (login-free) API through DNS rebinding. Set it if you open the app by another name, e.g. a LAN address. |
 
 ## Database
 
@@ -168,7 +169,9 @@ start, and demo data is added to an empty database unless `LOCAL_LINEAR_SEED=0`.
 Things to know:
 
 - There are **no schema migrations** yet: tables are created if missing, but changing the schema of an
-  existing database is not handled.
+  existing database is not handled. Databases created before the `UNIQUE (team_id, number)` rule on cycles lack it, so
+  two cycles created at the same moment can still get the same number there; to add it, run
+  `CREATE UNIQUE INDEX cycles_team_number ON cycles (team_id, number)` (it fails if duplicates already exist).
 - **Moving data between SQLite and PostgreSQL**: open **Database** in the sidebar, paste the URL of a new,
   *empty* database and press *Copy data* (same as `POST /api/database/copy`). Everything is copied in one
   transaction with its ids; the target must be empty (so copy before the first start on it, or start it with

@@ -192,7 +192,7 @@ class IssueIn(BaseModel):
     description: str = ""
     status_id: int | None = None
     priority: int = Field(default=0, ge=0, le=4)
-    estimate: int | None = None
+    estimate: int | None = Field(default=None, ge=0, le=2**31 - 1)
     assignee_id: int | None = None
     project_id: int | None = None
     milestone_id: int | None = None
@@ -207,7 +207,7 @@ class IssuePatch(BaseModel):
     description: str | None = None
     status_id: int | None = None
     priority: int | None = Field(default=None, ge=0, le=4)
-    estimate: int | None = None
+    estimate: int | None = Field(default=None, ge=0, le=2**31 - 1)
     assignee_id: int | None = None
     project_id: int | None = None
     milestone_id: int | None = None

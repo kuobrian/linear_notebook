@@ -1,4 +1,5 @@
 from concurrent.futures import ThreadPoolExecutor
+from datetime import date
 
 import pytest
 from conftest import TEST_DB, fresh_engine
@@ -36,8 +37,8 @@ def test_sqlite_still_enforces_foreign_keys():
         assert conn.exec_driver_sql("PRAGMA foreign_keys").scalar() == 1
 
 
-def test_concurrent_issue_creation_gets_unique_consecutive_numbers(tmp_path):
-    """The web app and the MCP server are separate processes writing at once; numbers must not collide."""
+def race_factory(tmp_path):
+    """A database two threads can really write to at once, with team ENG in it."""
     if TEST_DB:
         engine = fresh_engine()
     else:  # a file: the in-memory database shares one connection between threads, so it cannot race
@@ -46,16 +47,40 @@ def test_concurrent_issue_creation_gets_unique_consecutive_numbers(tmp_path):
     factory = sessionmaker(bind=engine, expire_on_commit=False)
     with factory() as db:
         api.create_team(s.TeamIn(key="ENG", name="Engineering"), db)
+    return factory
+
+
+def run_in_threads(count, job):
+    with ThreadPoolExecutor(count) as pool:
+        for future in [pool.submit(job) for _ in range(count)]:
+            future.result()  # re-raises e.g. a unique-constraint violation
+
+
+def test_concurrent_issue_creation_gets_unique_consecutive_numbers(tmp_path):
+    """The web app and the MCP server are separate processes writing at once; numbers must not collide."""
+    factory = race_factory(tmp_path)
 
     def worker():
         for _ in range(5):
             with factory() as db:
                 api.create_issue(s.IssueIn(team="ENG", title="x"), db)
 
-    with ThreadPoolExecutor(8) as pool:
-        for future in [pool.submit(worker) for _ in range(8)]:
-            future.result()  # re-raises e.g. a unique-constraint violation
+    run_in_threads(8, worker)
 
     with factory() as db:
         assert sorted(db.scalars(select(m.Issue.number))) == list(range(1, 41))
         assert db.scalar(select(m.Team.issue_counter)) == 40
+
+
+def test_concurrent_cycle_creation_gets_unique_consecutive_numbers(tmp_path):
+    factory = race_factory(tmp_path)
+
+    def worker():
+        for _ in range(3):
+            with factory() as db:
+                api.create_cycle(s.CycleIn(team="ENG", starts_at=date(2026, 1, 1), ends_at=date(2026, 1, 14)), db)
+
+    run_in_threads(4, worker)
+
+    with factory() as db:
+        assert sorted(db.scalars(select(m.Cycle.number))) == list(range(1, 13))

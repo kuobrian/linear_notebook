@@ -262,3 +262,12 @@ def test_huge_or_invalid_ids_are_rejected_instead_of_crashing(client, team):
         assert client.post("/api/labels", json={"name": "L", "team_id": value}).status_code == 404, value
     assert client.patch("/api/issues/ENG-1", json={"label_ids": list(range(1, 300))}).status_code == 422
 
+
+def test_estimate_must_fit_the_database_column(client, team):
+    # SQLite would store 2**40, but PostgreSQL cannot, which would break "Copy data" later
+    for bad in (-1, 2**31, 10**30):
+        assert client.post("/api/issues", json={"team": "ENG", "title": "x", "estimate": bad}).status_code == 422, bad
+    make_issue(client)
+    assert client.patch("/api/issues/ENG-1", json={"estimate": 2**31}).status_code == 422
+    assert client.patch("/api/issues/ENG-1", json={"estimate": 2**31 - 1}).status_code == 200
+

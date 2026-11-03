@@ -5,7 +5,7 @@ from urllib.parse import unquote
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.engine import make_url
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session, selectinload
 
 from . import markdown
@@ -589,12 +589,19 @@ def list_cycles(team: str | None = None, db: Session = Depends(get_session)):
 def create_cycle(body: s.CycleIn, db: Session = Depends(get_session)):
     if body.ends_at < body.starts_at:
         raise HTTPException(422, "ends_at must not be before starts_at")
-    team = _team(db, body.team)
-    number = (db.scalar(select(func.max(m.Cycle.number)).where(m.Cycle.team_id == team.id)) or 0) + 1
-    cycle = m.Cycle(team_id=team.id, number=number, name=body.name, starts_at=body.starts_at, ends_at=body.ends_at)
-    db.add(cycle)
-    db.commit()
-    return cycle
+    team_id = _team(db, body.team).id
+    # Next number = highest + 1. Two creators can pick the same one; the UNIQUE(team_id, number)
+    # constraint rejects the second, which then simply tries again with the new highest number.
+    for _ in range(5):
+        number = (db.scalar(select(func.max(m.Cycle.number)).where(m.Cycle.team_id == team_id)) or 0) + 1
+        cycle = m.Cycle(team_id=team_id, number=number, name=body.name, starts_at=body.starts_at, ends_at=body.ends_at)
+        db.add(cycle)
+        try:
+            db.commit()
+            return cycle
+        except IntegrityError:
+            db.rollback()
+    raise HTTPException(409, "Could not pick a cycle number, please try again")
 
 
 # ---- database --------------------------------------------------------------

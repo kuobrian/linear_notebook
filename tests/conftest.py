@@ -20,6 +20,8 @@ from local_linear import models  # noqa: F401  (registers the tables)
 from local_linear.db import Base, get_session, init_db, make_engine, normalize_url
 from local_linear.main import app
 
+os.environ.setdefault("LOCAL_LINEAR_ALLOWED_HOSTS", "testserver")  # TestClient's Host header
+
 TEST_DB = os.getenv("LOCAL_LINEAR_TEST_DB")
 USING_POSTGRES = bool(TEST_DB) and normalize_url(TEST_DB).startswith("postgresql")
 

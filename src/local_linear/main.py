@@ -3,12 +3,13 @@ import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, Request
+from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
 from .api import router
 from .db import SessionLocal, init_db
+from .hosts import host_allowed
 from .seed import seed
 
 STATIC_DIR = Path(__file__).parent / "static"
@@ -25,6 +26,15 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(title="Local Linear", lifespan=lifespan)
 app.include_router(router)
+
+
+@app.middleware("http")
+async def reject_foreign_hosts(request: Request, call_next):
+    if not host_allowed(request.headers.get("host", "")):
+        return PlainTextResponse("Invalid host header", status_code=421)
+    return await call_next(request)
+
+
 class RevalidatingStaticFiles(StaticFiles):
     """Static files that browsers re-check on every load (cheap, ETag based), so an upgraded
     app.js/style.css is picked up immediately instead of a stale cached copy."""

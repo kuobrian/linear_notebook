@@ -127,6 +127,7 @@ docker run -d --init -p 127.0.0.1:8000:8000 -p 127.0.0.1:8765:8765 -v local-line
 | -- | -- | -- |
 | `LOCAL_LINEAR_DB` | `sqlite:///local_linear.db` | 資料庫網址:SQLite(預設)或 PostgreSQL,見[資料庫](#資料庫)。SQLite 預設路徑相對於你啟動程式的目錄。 |
 | `LOCAL_LINEAR_SEED` | `1` | 設成 `0` 則在空資料庫上不建立示範資料。 |
+| `LOCAL_LINEAR_ALLOWED_HOSTS` | (無) | 除了 `127.0.0.1`、`localhost`、`[::1]` 之外,網頁和 MCP 伺服器還接受的主機名稱(逗號分隔)。其他 `Host` 標頭的請求會得到 `421`,避免其他網站透過 DNS 重新綁定操作沒有登入的 API。若你用別的名稱(例如區網位址)開啟應用,請設定它。 |
 
 ## 資料庫
 
@@ -151,6 +152,7 @@ uv run local-linear
 注意事項:
 
 - **目前沒有資料表結構的遷移(migration)機制**:缺少的表會自動建立,但已存在資料庫的結構變更不會處理。
+  在循環(cycle)加入 `UNIQUE (team_id, number)` 規則之前建立的資料庫沒有這條限制,同時建立兩個循環仍可能拿到相同編號;要補上可執行 `CREATE UNIQUE INDEX cycles_team_number ON cycles (team_id, number)`(若已有重複編號會失敗)。
 - **在 SQLite 與 PostgreSQL 之間搬資料**:點側邊欄的 **Database**,貼上一個全新、*空的*資料庫網址,按 *Copy data*(等同 `POST /api/database/copy`)。
   全部資料(含 id)在同一個交易中複製;目標必須是空的(所以請在它第一次啟動前複製,或用 `LOCAL_LINEAR_SEED=0` 啟動)。
   伺服器仍使用原本的資料庫:要切換請用新網址設定 `LOCAL_LINEAR_DB` 後重啟。此頁面和整個應用一樣沒有登入,請只綁定在 `127.0.0.1`。

@@ -16,6 +16,7 @@ from datetime import date
 from fastapi import HTTPException
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
+from mcp.server.transport_security import TransportSecuritySettings
 from pydantic import ValidationError
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -24,6 +25,7 @@ from . import api
 from . import models as m
 from . import schemas as s
 from .db import SessionLocal, init_db
+from .hosts import allowed_hosts
 
 mcp = MCPServer(
     "local-linear",
@@ -371,6 +373,15 @@ def delete_issue(issue: str) -> dict:
         return {"deleted": identifier}
 
 
+def transport_security() -> TransportSecuritySettings:
+    """Refuse foreign Host/Origin headers on every bind address (the SDK only does so for loopback)."""
+    hosts = allowed_hosts()
+    return TransportSecuritySettings(
+        allowed_hosts=[*hosts, *(f"{h}:*" for h in hosts)],
+        allowed_origins=[f"http://{h}:*" for h in hosts],
+    )
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(prog="local-linear-mcp", description="Local Linear MCP server")
     parser.add_argument("--transport", choices=["stdio", "http"], default="stdio",
@@ -386,7 +397,8 @@ def main(argv: list[str] | None = None) -> None:
             # There is no authentication: anyone who can reach the port can read and write the workspace.
             print(f"WARNING: serving without authentication on {args.host}; only do this on a trusted network.",
                   file=sys.stderr)
-        mcp.run("streamable-http", host=args.host, port=args.port, streamable_http_path=args.path)
+        mcp.run("streamable-http", host=args.host, port=args.port, streamable_http_path=args.path,
+                transport_security=transport_security())
     else:
         mcp.run("stdio")
 

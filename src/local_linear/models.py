@@ -119,6 +119,7 @@ class Milestone(Base):
 
 class Cycle(Base):
     __tablename__ = "cycles"
+    __table_args__ = (UniqueConstraint("team_id", "number"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
     team_id: Mapped[int] = mapped_column(ForeignKey("teams.id", ondelete="CASCADE"))
