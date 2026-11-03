@@ -169,9 +169,13 @@ Things to know:
 
 - There are **no schema migrations** yet: tables are created if missing, but changing the schema of an
   existing database is not handled.
-- There is **no built-in tool to move data from SQLite to PostgreSQL**; a new Postgres database starts empty.
+- **Moving data between SQLite and PostgreSQL**: open **Database** in the sidebar, paste the URL of a new,
+  *empty* database and press *Copy data* (same as `POST /api/database/copy`). Everything is copied in one
+  transaction with its ids; the target must be empty (so copy before the first start on it, or start it with
+  `LOCAL_LINEAR_SEED=0`). The server keeps using its current database: restart it with `LOCAL_LINEAR_DB` set to the
+  new URL to switch. The page has no login, like the rest of the app, so keep it on `127.0.0.1`.
 - Issue numbers (`ENG-12`) stay unique when the web app and the MCP server create issues at the same
-  time: on PostgreSQL the team's row is locked while a number is assigned.
+  time: each number is handed out by one atomic update of the team's counter (SQLite 3.35 or newer, or PostgreSQL).
 
 With Docker, add the PostgreSQL override file (the database runs in its own container with its own
 volume and is not published on a host port):
@@ -307,7 +311,7 @@ To run the same suite against PostgreSQL, give it an empty scratch database whos
 LOCAL_LINEAR_TEST_DB=postgresql://user:password@localhost:5432/local_linear_test uv run pytest
 ```
 
-That run also enables a concurrency test of issue numbering that is skipped on SQLite.
+The concurrency test of issue numbering runs on SQLite too (in a temporary file) and on PostgreSQL when `LOCAL_LINEAR_TEST_DB` is set.
 
 | Path | What |
 | -- | -- |

@@ -30,6 +30,7 @@ def make_engine(url: str | None = None) -> Engine:
         kwargs["connect_args"] = {"check_same_thread": False}
     else:
         kwargs["pool_pre_ping"] = True  # survive restarts of the database server
+        kwargs["connect_args"] = {"connect_timeout": 5}  # an unreachable host fails in seconds, not minutes
     if url in ("sqlite://", "sqlite:///:memory:"):
         from sqlalchemy.pool import StaticPool
 

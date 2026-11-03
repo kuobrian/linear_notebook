@@ -335,11 +335,8 @@ def list_issues(
         issues = api.list_issues(
             team=team, status_id=None, status_type=None, assignee_id=None, unassigned=False,
             project_id=project_id, milestone_id=None, cycle_id=None, label_id=None, priority=None,
-            parent_id=None, q=query, order_by="priority", limit=min(max(limit, 1), 1000), db=db,
+            parent_id=None, q=query, status_name=status, order_by="priority", limit=min(max(limit, 1), 1000), db=db,
         )
-        if status:
-            key = status.strip().lower()
-            issues = [i for i in issues if i.status.name.lower() == key or i.status.type == key]
         return [_json(i) for i in issues]
 
 

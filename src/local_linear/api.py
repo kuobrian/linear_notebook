@@ -1,18 +1,31 @@
 import re
 from datetime import datetime, timezone
+from urllib.parse import unquote
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import and_, func, or_, select, update
+from sqlalchemy.engine import make_url
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, selectinload
 
 from . import markdown
 from . import models as m
 from . import schemas as s
-from .db import get_session
+from .db import get_session, make_engine, normalize_url
+from .migrate import CopyError, copy_database, table_counts
 
 router = APIRouter(prefix="/api")
 
-ISSUE_ID = re.compile(r"^([A-Za-z][A-Za-z0-9]*)-(\d+)$")
+# At most 9 digits: a longer number cannot be an issue number and would overflow the database driver.
+ISSUE_ID = re.compile(r"^([A-Za-z][A-Za-z0-9]*)-(\d{1,9})$")
+
+# Foreign keys an issue may point at, checked before writing so a bad id is a 404, not a 500.
+ISSUE_REFS = {
+    "assignee_id": (m.User, "User"),
+    "project_id": (m.Project, "Project"),
+    "milestone_id": (m.Milestone, "Milestone"),
+    "cycle_id": (m.Cycle, "Cycle"),
+}
 
 DEFAULT_STATUSES = [
     ("Backlog", "backlog", "#bec2c8"),
@@ -24,37 +37,45 @@ DEFAULT_STATUSES = [
 
 
 # ---- helpers ---------------------------------------------------------------
-def _team(db: Session, key: str, lock: bool = False) -> m.Team:
-    stmt = select(m.Team).where(func.upper(m.Team.key) == key.upper())
-    if lock:
-        # Row lock (no-op on SQLite, which already serialises writers). On PostgreSQL it makes
-        # concurrent creators of issues in one team wait for each other, so numbers stay unique.
-        # populate_existing: if this session already loaded the team, re-read the counter that
-        # was current when the lock was granted instead of keeping the stale copy.
-        stmt = stmt.with_for_update().execution_options(populate_existing=True)
-    team = db.scalar(stmt)
+def _team(db: Session, key: str) -> m.Team:
+    team = db.scalar(select(m.Team).where(func.upper(m.Team.key) == key.upper()))
     if not team:
         raise HTTPException(404, f"Team {key!r} not found")
     return team
 
 
 def _get(db: Session, model, ident: int, label: str):
-    obj = db.get(model, ident)
+    obj = db.get(model, ident) if 0 < ident < 2**31 else None  # a larger id cannot exist and overflows the driver
     if not obj:
         raise HTTPException(404, f"{label} {ident} not found")
     return obj
 
 
+def _check_refs(db: Session, data: dict) -> None:
+    for field, (model, label) in ISSUE_REFS.items():
+        if data.get(field) is not None:
+            _get(db, model, data[field], label)
+
+
+def _reject_nulls(data: dict, fields: tuple[str, ...]) -> None:
+    """PATCH may clear optional fields with null, but not these: their columns are NOT NULL."""
+    for field in fields:
+        if field in data and data[field] is None:
+            raise HTTPException(422, f"{field} cannot be null")
+
+
 def _issue(db: Session, ref: str) -> m.Issue:
-    if ref.isdigit():
+    ident = ISSUE_ID.match(ref)
+    if ref.isdigit() and len(ref) <= 9:
         issue = db.get(m.Issue, int(ref))
-    else:
-        key, _, num = ref.rpartition("-")
-        if not num.isdigit():
-            raise HTTPException(404, f"Issue {ref!r} not found")
+    elif ident:
         issue = db.scalar(
-            select(m.Issue).join(m.Team).where(func.upper(m.Team.key) == key.upper(), m.Issue.number == int(num))
+            select(m.Issue).join(m.Team).where(
+                func.upper(m.Team.key) == ident.group(1).upper(), m.Issue.number == int(ident.group(2))
+            )
         )
+    else:
+        issue = None
     if not issue:
         raise HTTPException(404, f"Issue {ref!r} not found")
     return issue
@@ -286,6 +307,7 @@ def list_issues(
     priority: int | None = Query(default=None, ge=0, le=4),
     parent_id: int | None = None,
     q: str | None = None,
+    status_name: str | None = None,
     order_by: str = Query(default="updated", pattern="^(updated|created|priority|number)$"),
     limit: int = Query(default=500, ge=1, le=1000),
     db: Session = Depends(get_session),
@@ -300,6 +322,10 @@ def list_issues(
         stmt = stmt.where(m.Issue.status_id == status_id)
     if status_type:
         stmt = stmt.join(m.Status, m.Issue.status_id == m.Status.id).where(m.Status.type == status_type)
+    if status_name:  # a status name ("In Progress") or type ("started"), matched in SQL so `limit` still applies
+        key = status_name.strip().lower()
+        stmt = stmt.where(m.Issue.status_id.in_(
+            select(m.Status.id).where(or_(func.lower(m.Status.name) == key, m.Status.type == key))))
     if unassigned:
         stmt = stmt.where(m.Issue.assignee_id.is_(None))
     elif assignee_id is not None:
@@ -337,21 +363,23 @@ def list_issues(
 
 @router.post("/issues", response_model=s.IssueDetailOut, status_code=201)
 def create_issue(body: s.IssueIn, db: Session = Depends(get_session)):
-    team = _team(db, body.team, lock=True)  # holds the issue-number counter until commit
+    team = _team(db, body.team)
     if body.status_id is not None:
         status = _get(db, m.Status, body.status_id, "Status")
     else:
         status = next((x for x in team.statuses if x.type == "backlog"), team.statuses[0])
-    if body.assignee_id is not None:
-        _get(db, m.User, body.assignee_id, "User")
-    if body.project_id is not None:
-        _get(db, m.Project, body.project_id, "Project")
+    _check_refs(db, body.model_dump())
     _check_parent(db, None, body.parent_id)
 
-    team.issue_counter += 1
+    # One UPDATE ... RETURNING: concurrent creators queue on the row (PostgreSQL) or the write lock
+    # (SQLite) and each gets its own number. Reading the counter first and writing it back would not.
+    number = db.scalar(
+        update(m.Team).where(m.Team.id == team.id).values(issue_counter=m.Team.issue_counter + 1)
+        .returning(m.Team.issue_counter).execution_options(synchronize_session=False)
+    )
     issue = m.Issue(
         team_id=team.id,
-        number=team.issue_counter,
+        number=number,
         title=body.title,
         description=body.description,
         status=status,
@@ -391,16 +419,12 @@ def get_issue(ref: str, db: Session = Depends(get_session)):
 def update_issue(ref: str, body: s.IssuePatch, db: Session = Depends(get_session)):
     issue = _issue(db, ref)
     data = body.model_dump(exclude_unset=True)
-    if data.get("title", "x") is None or data.get("status_id", 0) is None:
-        raise HTTPException(422, "title and status_id cannot be null")
+    _reject_nulls(data, ("title", "description", "status_id", "priority"))
     if "status_id" in data:
         _apply_status(issue, _get(db, m.Status, data.pop("status_id"), "Status"))
     if "label_ids" in data:
         issue.labels = _labels(db, data.pop("label_ids") or [])
-    if data.get("assignee_id") is not None:
-        _get(db, m.User, data["assignee_id"], "User")
-    if data.get("project_id") is not None:
-        _get(db, m.Project, data["project_id"], "Project")
+    _check_refs(db, data)
     if "parent_id" in data:
         _check_parent(db, issue, data["parent_id"])
     for field, value in data.items():
@@ -476,6 +500,7 @@ def get_project(project_id: int, db: Session = Depends(get_session)):
 def update_project(project_id: int, body: s.ProjectPatch, db: Session = Depends(get_session)):
     project = _get(db, m.Project, project_id, "Project")
     data = body.model_dump(exclude_unset=True)
+    _reject_nulls(data, ("name", "summary", "description", "status", "priority", "color"))
     if "status" in data:
         _check_project_status(data["status"])
     if data.get("lead_id") is not None:
@@ -568,3 +593,40 @@ def create_cycle(body: s.CycleIn, db: Session = Depends(get_session)):
     db.add(cycle)
     db.commit()
     return cycle
+
+
+# ---- database --------------------------------------------------------------
+@router.get("/database")
+def database_info(db: Session = Depends(get_session)):
+    """Which database this server is using (password hidden) and how many rows each table holds."""
+    engine = db.get_bind()
+    return {
+        "kind": engine.dialect.name,
+        "location": unquote(engine.url.render_as_string(hide_password=True)),  # unquote: C%3A/ -> C:/
+        "counts": table_counts(engine),
+    }
+
+
+@router.post("/database/copy")
+def copy_to_database(body: s.DatabaseCopyIn, db: Session = Depends(get_session)):
+    """Copy all data into another, empty database (SQLite or PostgreSQL). The server keeps using
+    the current one: restart it with LOCAL_LINEAR_DB set to the new URL to switch."""
+    url = normalize_url(body.url.strip())
+    try:
+        backend = make_url(url).get_backend_name()
+    except Exception:
+        raise HTTPException(422, "Not a valid database URL")
+    if backend not in ("sqlite", "postgresql"):
+        raise HTTPException(422, "Only sqlite:/// and postgresql:// URLs are supported")
+    source = db.get_bind()
+    target = make_engine(url)
+    try:
+        if target.url == source.url:
+            raise CopyError("The target is the database this server is already using")
+        return {"copied": copy_database(source, target)}
+    except CopyError as e:
+        raise HTTPException(409, str(e))
+    except SQLAlchemyError as e:
+        raise HTTPException(400, "Copy failed: " + str(getattr(e, "orig", e)).strip().splitlines()[0])
+    finally:
+        target.dispose()

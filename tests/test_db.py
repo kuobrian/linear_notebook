@@ -1,14 +1,14 @@
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
-from conftest import USING_POSTGRES, fresh_engine
+from conftest import TEST_DB, fresh_engine
 from sqlalchemy import select
 from sqlalchemy.orm import sessionmaker
 
 from local_linear import api
 from local_linear import models as m
 from local_linear import schemas as s
-from local_linear.db import make_engine, normalize_url
+from local_linear.db import init_db, make_engine, normalize_url
 
 
 @pytest.mark.parametrize(
@@ -36,10 +36,13 @@ def test_sqlite_still_enforces_foreign_keys():
         assert conn.exec_driver_sql("PRAGMA foreign_keys").scalar() == 1
 
 
-@pytest.mark.skipif(not USING_POSTGRES, reason="needs LOCAL_LINEAR_TEST_DB=postgresql://.../..._test")
-def test_concurrent_issue_creation_gets_unique_consecutive_numbers():
+def test_concurrent_issue_creation_gets_unique_consecutive_numbers(tmp_path):
     """The web app and the MCP server are separate processes writing at once; numbers must not collide."""
-    engine = fresh_engine()
+    if TEST_DB:
+        engine = fresh_engine()
+    else:  # a file: the in-memory database shares one connection between threads, so it cannot race
+        engine = make_engine(f"sqlite:///{(tmp_path / 'race.db').as_posix()}")
+        init_db(engine)
     factory = sessionmaker(bind=engine, expire_on_commit=False)
     with factory() as db:
         api.create_team(s.TeamIn(key="ENG", name="Engineering"), db)

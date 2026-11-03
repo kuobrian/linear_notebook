@@ -1,6 +1,6 @@
 from datetime import date, datetime, timezone
 
-from sqlalchemy import Column, Date, DateTime, ForeignKey, Integer, String, Table, Text, UniqueConstraint
+from sqlalchemy import Column, Date, DateTime, ForeignKey, Integer, String, Table, Text, TypeDecorator, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .db import Base
@@ -12,6 +12,20 @@ PRIORITIES = {0: "No priority", 1: "Urgent", 2: "High", 3: "Medium", 4: "Low"}
 
 def utcnow() -> datetime:
     return datetime.now(timezone.utc)
+
+
+class UTCDateTime(TypeDecorator):
+    """A timestamp that always comes back timezone-aware (UTC).
+
+    SQLite does not store the zone and returns naive datetimes, which the browser would read as
+    local time; PostgreSQL already returns aware ones. Everything written here is UTC.
+    """
+
+    impl = DateTime(timezone=True)
+    cache_ok = True
+
+    def process_result_value(self, value, dialect):
+        return value.replace(tzinfo=timezone.utc) if value is not None and value.tzinfo is None else value
 
 
 issue_labels = Table(
@@ -80,8 +94,8 @@ class Project(Base):
     lead_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
     start_date: Mapped[date | None] = mapped_column(Date)
     target_date: Mapped[date | None] = mapped_column(Date)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, onupdate=utcnow)
 
     team: Mapped[Team] = relationship()
     lead: Mapped[User | None] = relationship()
@@ -134,10 +148,10 @@ class Issue(Base):
     cycle_id: Mapped[int | None] = mapped_column(ForeignKey("cycles.id", ondelete="SET NULL"))
     parent_id: Mapped[int | None] = mapped_column(ForeignKey("issues.id", ondelete="SET NULL"))
     due_date: Mapped[date | None] = mapped_column(Date)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
-    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    canceled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, onupdate=utcnow)
+    completed_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    canceled_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
 
     team: Mapped[Team] = relationship()
     status: Mapped[Status] = relationship()
@@ -160,7 +174,7 @@ class Comment(Base):
     issue_id: Mapped[int] = mapped_column(ForeignKey("issues.id", ondelete="CASCADE"))
     author_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
     body: Mapped[str] = mapped_column(Text)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
 
     issue: Mapped[Issue] = relationship(back_populates="comments")
     author: Mapped[User | None] = relationship()
@@ -173,7 +187,7 @@ class Document(Base):
     project_id: Mapped[int | None] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"))
     title: Mapped[str] = mapped_column(String(300))
     content: Mapped[str] = mapped_column(Text, default="")
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, onupdate=utcnow)
 
     project: Mapped[Project | None] = relationship(back_populates="documents")

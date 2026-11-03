@@ -153,3 +153,12 @@ h1, h2, h3 { margin: 0; font-weight: 600; }
   .detail .props { border-left: 0; border-top: 1px solid var(--border); }
   .row .meta .chip { display: none; }
 }
+
+.db-page { padding: 20px; max-width: 760px; display: flex; flex-direction: column; gap: 14px; }
+.db-page h2 { font-size: 13px; margin-top: 8px; }
+.db-page code { background: var(--hover); border-radius: 4px; padding: 1px 6px; word-break: break-all; }
+.db-form { display: flex; gap: 8px; }
+.db-form .field { flex: 1; }
+.db-counts { display: flex; flex-wrap: wrap; gap: 6px; }
+.db-result { display: flex; flex-direction: column; gap: 6px; }
+

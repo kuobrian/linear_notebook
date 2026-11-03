@@ -151,8 +151,10 @@ uv run local-linear
 注意事項:
 
 - **目前沒有資料表結構的遷移(migration)機制**:缺少的表會自動建立,但已存在資料庫的結構變更不會處理。
-- **沒有內建工具把 SQLite 的資料搬到 PostgreSQL**;新的 Postgres 資料庫一開始是空的。
-- 網頁版和 MCP server 同時建立 Issue 時,編號(`ENG-12`)仍會保持唯一:在 PostgreSQL 上,指派編號期間會鎖住該團隊的資料列。
+- **在 SQLite 與 PostgreSQL 之間搬資料**:點側邊欄的 **Database**,貼上一個全新、*空的*資料庫網址,按 *Copy data*(等同 `POST /api/database/copy`)。
+  全部資料(含 id)在同一個交易中複製;目標必須是空的(所以請在它第一次啟動前複製,或用 `LOCAL_LINEAR_SEED=0` 啟動)。
+  伺服器仍使用原本的資料庫:要切換請用新網址設定 `LOCAL_LINEAR_DB` 後重啟。此頁面和整個應用一樣沒有登入,請只綁定在 `127.0.0.1`。
+- 網頁版和 MCP server 同時建立 Issue 時,編號(`ENG-12`)仍會保持唯一:每個編號都由一次對團隊計數器的原子更新(atomic update)取得(SQLite 3.35 以上,或 PostgreSQL)。
 
 使用 Docker 時,再加上 PostgreSQL 的覆寫檔(資料庫跑在自己的容器和 volume 裡,不會對外開放主機埠):
 
@@ -276,7 +278,7 @@ uv run pytest        # API、示範資料與 MCP 測試(記憶體內 SQLite)
 LOCAL_LINEAR_TEST_DB=postgresql://user:password@localhost:5432/local_linear_test uv run pytest
 ```
 
-這樣跑時還會啟用一個在 SQLite 下會被跳過的「Issue 編號併發」測試。
+「Issue 編號併發」測試在 SQLite(使用暫存檔)和設定了 `LOCAL_LINEAR_TEST_DB` 的 PostgreSQL 上都會執行。
 
 | 路徑 | 內容 |
 | -- | -- |

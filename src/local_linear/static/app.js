@@ -163,6 +163,7 @@ function renderSidebar(route) {
     state.meta.users.length > 0 && h("div", { class: "prop", style: "padding:0 8px 6px" },
       h("label", {}, "Signed in as"),
       select(state.meta.users.map((u) => [u.id, u.name]), currentUser().id, (v) => store.set("me", +v), "field")),
+    nav("Database", "#/database", page === "database"),
     h("button", { class: "nav-item", onclick: toggleTheme }, "Toggle theme")
   );
 }
@@ -616,6 +617,42 @@ function openProjectModal() {
   name.focus();
 }
 
+// ---- database --------------------------------------------------------------
+async function renderDatabase(route) {
+  renderSidebar(route);
+  const info = await api("/database");
+  const url = h("input", { class: "field", placeholder: "postgresql://user:password@localhost:5432/local_linear", spellcheck: "false", autocomplete: "off" });
+  const result = h("div", { class: "db-result" });
+  const run = h("button", { class: "btn primary", onclick: async () => {
+    if (!url.value.trim()) return;
+    run.disabled = true;
+    result.textContent = "Copying…";
+    try {
+      const { copied } = await api("/database/copy", { method: "POST", body: { url: url.value.trim() } });
+      const rows = Object.values(copied).reduce((a, b) => a + b, 0);
+      result.replaceChildren(
+        h("strong", {}, `Copied ${rows} rows.`),
+        h("div", { class: "hint" }, "This server is still using the current database. To switch, restart it with:"),
+        h("code", {}, "LOCAL_LINEAR_DB=" + url.value.trim().replace(/:[^:@/]*@/, ":****@")));
+    } catch (e) {
+      result.textContent = "";
+    } finally {
+      run.disabled = false;
+    }
+  } }, "Copy data");
+  $("#main").replaceChildren(
+    h("div", { class: "page-header" }, h("h1", {}, "Database")),
+    h("div", { class: "db-page" },
+      h("div", { class: "prop" }, h("label", {}, "Using"),
+        h("div", {}, h("span", { class: "chip" }, info.kind === "postgresql" ? "PostgreSQL" : "SQLite"), " ", h("code", {}, info.location))),
+      h("div", { class: "prop" }, h("label", {}, "Rows"),
+        h("div", { class: "db-counts" }, Object.entries(info.counts).map(([k, v]) => h("span", { class: "chip" }, `${k} ${v}`)))),
+      h("h2", {}, "Copy to another database"),
+      h("p", { class: "hint" }, "Copies everything into an empty SQLite or PostgreSQL database, keeping all ids. Nothing in the current database changes."),
+      h("div", { class: "db-form" }, url, run),
+      result));
+}
+
 // ---- router & shortcuts ----------------------------------------------------
 async function route() {
   const r = parseRoute();
@@ -624,6 +661,7 @@ async function route() {
     if (page === "issue") await renderIssue(r);
     else if (page === "projects") await renderProjects(r);
     else if (page === "project") await renderProject(r);
+    else if (page === "database") await renderDatabase(r);
     else await renderIssues(r);
   } catch (e) {
     if (!$("#toast.error")) toast(String(e.message || e), true);

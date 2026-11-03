@@ -172,12 +172,12 @@ class TeamIn(BaseModel):
 
 class UserIn(BaseModel):
     name: str = Field(min_length=1, max_length=100)
-    email: str | None = None
+    email: str | None = Field(default=None, max_length=200)
 
 
 class LabelIn(BaseModel):
     name: str = Field(min_length=1, max_length=50)
-    color: str = "#5e6ad2"
+    color: str = Field(default="#5e6ad2", max_length=20)
     team_id: int | None = None
 
 
@@ -220,11 +220,11 @@ class CommentIn(BaseModel):
 class ProjectIn(BaseModel):
     team: str
     name: str = Field(min_length=1, max_length=200)
-    summary: str = ""
+    summary: str = Field(default="", max_length=300)
     description: str = ""
     status: str = "planned"
     priority: int = Field(default=0, ge=0, le=4)
-    color: str = "#4cb782"
+    color: str = Field(default="#4cb782", max_length=20)
     lead_id: int | None = None
     start_date: date | None = None
     target_date: date | None = None
@@ -232,11 +232,11 @@ class ProjectIn(BaseModel):
 
 class ProjectPatch(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=200)
-    summary: str | None = None
+    summary: str | None = Field(default=None, max_length=300)
     description: str | None = None
     status: str | None = None
     priority: int | None = Field(default=None, ge=0, le=4)
-    color: str | None = None
+    color: str | None = Field(default=None, max_length=20)
     lead_id: int | None = None
     start_date: date | None = None
     target_date: date | None = None
@@ -250,7 +250,7 @@ class MilestoneIn(BaseModel):
 
 class CycleIn(BaseModel):
     team: str
-    name: str | None = None
+    name: str | None = Field(default=None, max_length=100)
     starts_at: date
     ends_at: date
 
@@ -264,3 +264,7 @@ class DocumentIn(BaseModel):
 class DocumentPatch(BaseModel):
     title: str | None = Field(default=None, min_length=1, max_length=300)
     content: str | None = None
+
+
+class DatabaseCopyIn(BaseModel):
+    url: str = Field(min_length=1, max_length=500, description="URL of an empty target database")

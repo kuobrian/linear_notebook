@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from conftest import status_id
 
 
@@ -181,6 +183,38 @@ def test_search_by_id_also_finds_text_mentions(client, team):
     make_issue(client, title="blocks ENG-2 from shipping")  # ENG-1, mentions ENG-2
     make_issue(client, title="plain")                       # ENG-2
     assert sorted(i["identifier"] for i in client.get("/api/issues", params={"q": "ENG-2"}).json()) == ["ENG-1", "ENG-2"]
+
+
+def test_timestamps_carry_a_time_zone_when_read_back(client, team):
+    make_issue(client)
+    client.post("/api/issues/ENG-1/comments", json={"body": "x"})
+    detail = client.get("/api/issues/ENG-1").json()  # read from the database, not the create response
+    for stamp in (detail["created_at"], detail["updated_at"], detail["comments"][0]["created_at"]):
+        assert datetime.fromisoformat(stamp).tzinfo is not None  # a bare time would be read as local time
+
+
+def test_bad_input_is_rejected_instead_of_crashing(client, team):
+    make_issue(client)
+    pid = client.post("/api/projects", json={"team": "ENG", "name": "P"}).json()["id"]
+    # null clears optional fields, but not NOT NULL ones
+    for body in ({"title": None}, {"description": None}, {"status_id": None}, {"priority": None}):
+        assert client.patch("/api/issues/ENG-1", json=body).status_code == 422, body
+    for body in ({"name": None}, {"summary": None}, {"description": None}, {"color": None}, {"priority": None}):
+        assert client.patch(f"/api/projects/{pid}", json=body).status_code == 422, body
+    # ids that do not exist, or are too big for the database
+    for body in ({"milestone_id": 9999}, {"cycle_id": 9999}, {"project_id": 10**20}):
+        assert client.patch("/api/issues/ENG-1", json=body).status_code == 404, body
+        assert client.post("/api/issues", json={"team": "ENG", "title": "x", **body}).status_code == 404, body
+    assert client.get(f"/api/projects/{10**20}").status_code == 404
+    # text longer than its column (PostgreSQL refuses it; SQLite would silently keep it)
+    assert client.patch(f"/api/projects/{pid}", json={"summary": "x" * 301}).status_code == 422
+    assert client.post("/api/projects", json={"team": "ENG", "name": "P", "color": "x" * 21}).status_code == 422
+    assert client.post("/api/labels", json={"name": "L", "color": "x" * 21}).status_code == 422
+    # an issue number too long to exist is simply not found
+    assert client.get("/api/issues", params={"q": "ENG-99999999999999999999"}).json() == []
+    assert client.get("/api/issues/ENG-99999999999999999999").status_code == 404
+    assert client.get("/api/issues/99999999999999999999").status_code == 404
+    assert client.get("/api/issues/ENG-1").json()["title"] == "Something"  # nothing above changed it
 
 
 def test_static_files_are_revalidated_not_cached_blindly(client):

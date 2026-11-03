@@ -208,6 +208,13 @@ def test_labels_and_list_issues_filters(factory):
     assert len(structured(call("list_issues", team="DEMO", status="started"))) == 1
 
 
+def test_list_issues_status_filter_runs_before_the_limit(factory):
+    # DEMO's highest-priority issue is Done; the Todo one ranks lower but must still be found
+    for status in ("Todo", "todo", "unstarted"):  # name, any case, or type
+        found = structured(call("list_issues", team="DEMO", status=status, limit=1))
+        assert [i["status"]["name"] for i in found] == ["Todo"], status
+
+
 def test_update_project(factory):
     res = structured(call("update_project", project_id=1, status="completed", target_date="2027-03-01", lead="Alex"))
     assert res["status"] == "completed" and res["target_date"] == "2027-03-01" and res["lead"]["name"] == "Alex"
