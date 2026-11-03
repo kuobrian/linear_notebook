@@ -260,10 +260,26 @@ function listView(issues, opts = {}) {
   for (const st of statusesFor(issues)) {
     const group = issues.filter((i) => i.status.name === st.name);
     if (!group.length) continue;
-    wrap.append(
-      h("div", { class: "group-head" }, statusIcon(st.type, st.color), st.name, h("span", { class: "count" }, group.length),
-        h("button", { class: "add", title: "New issue", onclick: () => openIssueModal({ status: st.name, ...(opts.defaults || {}) }) }, "+")),
-      ...group.map(issueRow));
+    const rows = group.map(issueRow);
+    const chevron = h("span", { class: "chevron" });
+    const head = h("div", { class: "group-head collapsible", role: "button", tabindex: "0" }, chevron,
+      statusIcon(st.type, st.color), st.name, h("span", { class: "count" }, group.length),
+      h("button", { class: "add", title: "New issue", onclick: (e) => { e.stopPropagation(); openIssueModal({ status: st.name, ...(opts.defaults || {}) }); } }, "+"));
+    const show = (open) => {
+      head.setAttribute("aria-expanded", open);
+      chevron.textContent = open ? "▾" : "▸";
+      rows.forEach((r) => { r.style.display = open ? "" : "none"; });
+    };
+    const toggle = () => {
+      const closed = new Set(store.get("collapsed", []));
+      closed.has(st.name) ? closed.delete(st.name) : closed.add(st.name);
+      store.set("collapsed", [...closed]);
+      show(!closed.has(st.name));
+    };
+    head.onclick = toggle;
+    head.onkeydown = (e) => { if ((e.key === "Enter" || e.key === " ") && e.target === head) { e.preventDefault(); toggle(); } };
+    show(!store.get("collapsed", []).includes(st.name));
+    wrap.append(head, ...rows);
   }
   return wrap;
 }
@@ -376,7 +392,7 @@ async function renderIssue(route) {
         issue.comments.map((c) => h("div", { class: "comment" },
           h("div", { class: "who" }, avatar(c.author), c.author ? c.author.name : "Unknown",
             h("span", {}, new Date(c.created_at).toLocaleString()),
-            h("button", { class: "del", title: "Delete comment", onclick: async () => { await api("/comments/" + c.id, { method: "DELETE" }); refresh(); } }, "✕")),
+            h("button", { class: "del", title: "Delete comment", onclick: async () => { if (!await confirmDialog("Delete this comment? This cannot be undone.")) return; await api("/comments/" + c.id, { method: "DELETE" }); refresh(); } }, "✕")),
           mdView(c.body_html, "body"))),
         h("div", { class: "composer" }, commentBox, previewBox, h("div", { style: "display:flex;gap:8px" }, previewBtn, send))),
       h("div", { class: "props" },
@@ -458,7 +474,7 @@ async function renderProject(route) {
       p.milestones.map((ms) => h("div", { class: "ms-row" },
         h("strong", {}, ms.name), h("span", { style: "color:var(--muted)" }, ms.target_date ? fmtDate(ms.target_date) : "No date"),
         h("span", { style: "margin-left:auto;color:var(--muted)" }, `${ms.done_count}/${ms.issue_count}`),
-        h("button", { class: "back", onclick: async () => { await api("/milestones/" + ms.id, { method: "DELETE" }); refresh(); } }, "✕"))),
+        h("button", { class: "back", onclick: async () => { if (!await confirmDialog(`Delete milestone "${ms.name}"? Its issues are kept. This cannot be undone.`)) return; await api("/milestones/" + ms.id, { method: "DELETE" }); refresh(); } }, "✕"))),
       h("div", { class: "ms-row" }, msName, msDate, h("button", { class: "btn", onclick: async () => {
         if (!msName.value.trim()) return;
         await api(`/projects/${id}/milestones`, { method: "POST", body: { name: msName.value.trim(), target_date: msDate.value || null } });
@@ -486,7 +502,7 @@ async function renderProject(route) {
 function documentEditor(d, refresh) {
   return h("div", { class: "doc" },
     h("div", { class: "doc-row" }, h("strong", {}, d.title),
-      h("button", { class: "back", style: "margin-left:auto", onclick: async () => { await api("/documents/" + d.id, { method: "DELETE" }); refresh(); } }, "✕")),
+      h("button", { class: "back", style: "margin-left:auto", onclick: async () => { if (!await confirmDialog(`Delete document "${d.title}"? This cannot be undone.`)) return; await api("/documents/" + d.id, { method: "DELETE" }); refresh(); } }, "✕")),
     mdBlock({ source: d.content, html: d.content_html, placeholder: "Empty document — click to edit", tall: true,
       onSave: async (v) => { await api("/documents/" + d.id, { method: "PATCH", body: { content: v } }); refresh(); } }));
 }

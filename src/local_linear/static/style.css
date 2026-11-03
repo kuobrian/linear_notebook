@@ -49,6 +49,8 @@ h1, h2, h3 { margin: 0; font-weight: 600; }
 .seg button.active { background: var(--hover); color: var(--text); }
 
 .group-head { display: flex; align-items: center; gap: 8px; padding: 6px 20px; background: var(--panel); border-bottom: 1px solid var(--border); font-weight: 600; }
+.group-head.collapsible { cursor: pointer; user-select: none; }
+.group-head .chevron { width: 12px; color: var(--muted); font-size: 11px; }
 .group-head .count { color: var(--muted); font-weight: 400; }
 .group-head .add { margin-left: auto; border: 0; background: none; color: var(--muted); font-size: 16px; }
 .row { display: flex; align-items: center; gap: 10px; padding: 7px 20px; border-bottom: 1px solid var(--border); cursor: pointer; }

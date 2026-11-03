@@ -276,6 +276,8 @@ def list_labels(db: Session = Depends(get_session)):
 
 @router.post("/labels", response_model=s.LabelOut, status_code=201)
 def create_label(body: s.LabelIn, db: Session = Depends(get_session)):
+    if body.team_id is not None:
+        _get(db, m.Team, body.team_id, "Team")
     dup = db.scalar(select(m.Label).where(m.Label.name == body.name, m.Label.team_id == body.team_id))
     if dup:
         raise HTTPException(409, "Label already exists")
@@ -296,16 +298,16 @@ def delete_label(label_id: int, db: Session = Depends(get_session)):
 @router.get("/issues", response_model=list[s.IssueOut])
 def list_issues(
     team: str | None = None,
-    status_id: int | None = None,
+    status_id: s.Id | None = None,
     status_type: str | None = None,
-    assignee_id: int | None = None,
+    assignee_id: s.Id | None = None,
     unassigned: bool = False,
-    project_id: int | None = None,
-    milestone_id: int | None = None,
-    cycle_id: int | None = None,
-    label_id: int | None = None,
+    project_id: s.Id | None = None,
+    milestone_id: s.Id | None = None,
+    cycle_id: s.Id | None = None,
+    label_id: s.Id | None = None,
     priority: int | None = Query(default=None, ge=0, le=4),
-    parent_id: int | None = None,
+    parent_id: s.Id | None = None,
     q: str | None = None,
     status_name: str | None = None,
     order_by: str = Query(default="updated", pattern="^(updated|created|priority|number)$"),

@@ -224,3 +224,20 @@ def test_update_project(factory):
     assert call("update_project", project_id=1, status="bogus").is_error
     assert call("update_project", project_id=99, name="x").is_error
     assert "Nothing to update" in call("update_project", project_id=1).content[0].text
+
+
+@pytest.mark.parametrize("tool, args", [
+    ("get_issue", {}), ("update_issue", {"title": "x"}), ("add_comment", {"body": "x"}), ("delete_issue", {}),
+])
+def test_bare_number_is_not_an_issue_reference(factory, tool, args):
+    # "1" would otherwise be read as an internal row id, which is not the issue DEMO-1
+    result = call(tool, issue="1", **args)
+    assert result.is_error and "ENG-12" in result.content[0].text
+    with factory() as db:
+        assert db.scalar(select(m.Issue.id).where(m.Issue.id == 1)) == 1  # nothing was deleted or changed
+
+
+def test_bare_number_is_not_accepted_as_parent(factory):
+    result = call("create_issue", team="DEMO", title="child", parent="1")
+    assert result.is_error and "ENG-12" in result.content[0].text
+

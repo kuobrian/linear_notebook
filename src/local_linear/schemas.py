@@ -1,8 +1,13 @@
 from datetime import date, datetime
+from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field
 
 from . import markdown
+
+# A database id: positive and within a 32-bit column, so a huge number is a 422, not a driver error.
+Id = Annotated[int, Field(ge=1, le=2**31 - 1)]
+
 
 class ORM(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -194,7 +199,7 @@ class IssueIn(BaseModel):
     cycle_id: int | None = None
     parent_id: int | None = None
     due_date: date | None = None
-    label_ids: list[int] = []
+    label_ids: list[Id] = Field(default=[], max_length=200)
 
 
 class IssuePatch(BaseModel):
@@ -209,7 +214,7 @@ class IssuePatch(BaseModel):
     cycle_id: int | None = None
     parent_id: int | None = None
     due_date: date | None = None
-    label_ids: list[int] | None = None
+    label_ids: list[Id] | None = Field(default=None, max_length=200)
 
 
 class CommentIn(BaseModel):

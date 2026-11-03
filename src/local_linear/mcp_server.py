@@ -53,6 +53,14 @@ def _db() -> Iterator[Session]:
             raise ToolError(f"Invalid input: {problems}") from exc
 
 
+def _ref(issue: str) -> str:
+    """Issues are addressed by identifier only: a bare number would be read as an internal row id."""
+    issue = issue.strip()
+    if not api.ISSUE_ID.match(issue):
+        raise ToolError(f"{issue!r} is not an issue identifier; use one like 'ENG-12'")
+    return issue
+
+
 def _json(model) -> dict:
     return model.model_dump(mode="json")
 
@@ -255,7 +263,7 @@ def create_issue(
             label_ids=_label_ids(db, labels) if labels else [],
             assignee_id=_user_id(db, assignee), project_id=project_id,
             due_date=_date(due_date, "due_date") if due_date else None,
-            parent_id=api._issue(db, parent).id if parent else None,
+            parent_id=api._issue(db, _ref(parent)).id if parent else None,
         )
         return _json(api.create_issue(body, db))
 
@@ -284,6 +292,7 @@ def update_issue(
         project_id: Project id, or 0 to remove the issue from its project.
         due_date: ISO date, or "" to clear.
     """
+    issue = _ref(issue)
     with _db() as db:
         row = api._issue(db, issue)
         fields: dict = {}
@@ -309,6 +318,7 @@ def update_issue(
 @mcp.tool()
 def get_issue(issue: str) -> dict:
     """Get one issue by identifier (e.g. "ENG-12") with its comments and sub-issues."""
+    issue = _ref(issue)
     with _db() as db:
         return _json(api.get_issue(issue, db))
 
@@ -331,6 +341,8 @@ def list_issues(
         limit: Maximum number of issues to return (1-1000, default 200). If the result has exactly
             this many items there may be more; narrow the filters or raise the limit.
     """
+    if project_id is not None and not 0 < project_id < 2**31:
+        raise ToolError(f"Project {project_id} not found")
     with _db() as db:
         issues = api.list_issues(
             team=team, status_id=None, status_type=None, assignee_id=None, unassigned=False,
@@ -343,6 +355,7 @@ def list_issues(
 @mcp.tool()
 def add_comment(issue: str, body: str, author: str | None = None) -> dict:
     """Comment on an issue (Markdown supported). `author` is the name of an existing user."""
+    issue = _ref(issue)
     with _db() as db:
         comment = api.add_comment(issue, s.CommentIn(body=body, author_id=_user_id(db, author)), db)
         return _json(s.CommentOut.model_validate(comment))
@@ -351,6 +364,7 @@ def add_comment(issue: str, body: str, author: str | None = None) -> dict:
 @mcp.tool()
 def delete_issue(issue: str) -> dict:
     """Permanently delete an issue (and its comments). Sub-issues are kept. Cannot be undone."""
+    issue = _ref(issue)
     with _db() as db:
         identifier = api._issue(db, issue).identifier
         api.delete_issue(issue, db)

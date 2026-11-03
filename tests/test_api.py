@@ -250,3 +250,15 @@ def test_delete_issue_in_every_kind_of_situation(client, team):
     assert client.get(f"/api/projects/{project['id']}").json()["milestones"][0]["issue_count"] == 0
     assert [x["name"] for x in client.get("/api/labels").json()] == ["Bug"]
     assert [u["name"] for u in client.get("/api/users").json()] == ["Sam"]
+
+
+def test_huge_or_invalid_ids_are_rejected_instead_of_crashing(client, team):
+    make_issue(client)
+    for value in (0, -5, 2**31, 10**30):
+        for param in ("status_id", "assignee_id", "project_id", "milestone_id", "cycle_id", "label_id", "parent_id"):
+            assert client.get(f"/api/issues?{param}={value}").status_code == 422, (param, value)
+        assert client.patch("/api/issues/ENG-1", json={"label_ids": [value]}).status_code == 422, value
+        assert client.post("/api/issues", json={"team": "ENG", "title": "x", "label_ids": [value]}).status_code == 422
+        assert client.post("/api/labels", json={"name": "L", "team_id": value}).status_code == 404, value
+    assert client.patch("/api/issues/ENG-1", json={"label_ids": list(range(1, 300))}).status_code == 422
+
