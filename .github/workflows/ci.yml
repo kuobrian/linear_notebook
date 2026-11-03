@@ -1,0 +1,90 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  UV_VERSION: "0.10.4"  # same as the Dockerfile
+
+jobs:
+  # Everything except the browser tests, on the default database (in-memory SQLite).
+  sqlite:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: ${{ env.UV_VERSION }}
+      - run: uv sync --frozen
+      - run: uv run pytest -ra --ignore=tests/test_ui.py
+
+  # The same suite on PostgreSQL. The tests drop every table in the database, so its name contains "test".
+  postgres:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: local_linear_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres -d local_linear_test"
+          --health-interval 5s --health-timeout 3s --health-retries 10
+    env:
+      LOCAL_LINEAR_TEST_DB: postgresql://postgres:postgres@localhost:5432/local_linear_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: ${{ env.UV_VERSION }}
+      - run: uv sync --frozen
+      - run: uv run pytest -ra --ignore=tests/test_ui.py
+      # Concurrent cycle creation once failed only now and then on PostgreSQL: repeat it to catch a relapse.
+      - name: Repeat the concurrency tests
+        run: |
+          for i in 1 2 3 4 5 6 7 8 9 10; do
+            uv run pytest -q tests/test_db.py -k concurrent || exit 1
+          done
+
+  # Browser tests drive the system Chrome that GitHub's runners ship with (Chromium only).
+  browser:
+    runs-on: ubuntu-latest
+    env:
+      LOCAL_LINEAR_REQUIRE_BROWSER: "1"  # no browser is a failure here, not a skip
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: ${{ env.UV_VERSION }}
+      - run: uv sync --frozen
+      - run: uv run pytest -ra tests/test_ui.py
+
+  # Build the image and start both compose setups, then check them with docker/check.sh.
+  docker:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: sqlite
+            files: "-f docker-compose.yml"
+          - name: postgresql
+            files: "-f docker-compose.yml -f docker-compose.postgres.yml"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Start
+        run: docker compose ${{ matrix.files }} up --build -d --wait --wait-timeout 240
+      - name: Check
+        run: bash docker/check.sh ${{ matrix.name }}
+      - name: Logs
+        if: failure()
+        run: docker compose ${{ matrix.files }} logs --no-color
+      - name: Stop
+        if: always()
+        run: docker compose ${{ matrix.files }} down -v

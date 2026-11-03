@@ -56,6 +56,8 @@ def browser():
             except playwright_api.Error:
                 continue
         else:
+            if os.getenv("LOCAL_LINEAR_REQUIRE_BROWSER"):  # CI: a missing browser must not pass silently
+                pytest.fail("neither Chrome nor Edge could be started")
             pytest.skip("neither Chrome nor Edge could be started")
         yield b
         b.close()
@@ -238,6 +240,37 @@ def test_project_page_adds_and_removes_a_milestone(page, base_url, team):
     page.locator("[role=dialog]").get_by_role("button", name="Delete").click()
     page.wait_for_function("!document.body.innerText.includes('Beta')")
     assert httpx.get(f"{base_url}/api/projects/{project['id']}").json()["milestones"] == []
+
+
+def test_cycles_page_creates_edits_and_deletes_and_the_issue_page_assigns(page, base_url, team):
+    issue = add_issue(base_url, team, "Plan me")
+    page.goto(f"{base_url}/#/cycles?team={team['key']}")
+    page.wait_for_selector("h1")
+
+    page.locator("#cycle-start").fill("2026-03-01")
+    page.locator("#cycle-end").fill("2026-03-14")
+    page.get_by_role("button", name="Add cycle").click()
+    page.wait_for_selector("[data-cycle]")
+    cycle = httpx.get(f"{base_url}/api/cycles", params={"team": team["key"]}).json()[0]
+
+    name = page.locator("[data-cycle] .cycle-name")
+    name.fill("Spring")
+    name.press("Enter")
+    page.wait_for_function("document.querySelector('.cycle-name').value === 'Spring'")
+    assert httpx.get(f"{base_url}/api/cycles", params={"team": team["key"]}).json()[0]["name"] == "Spring"
+
+    page.goto(f"{base_url}/#/issue/{issue['identifier']}")
+    page.locator(".prop", has_text="Cycle").locator("select").select_option(label=page.locator(".prop", has_text="Cycle").locator("option").nth(1).inner_text())
+    page.wait_for_function("document.querySelector('.props') !== null")
+    assert httpx.get(f"{base_url}/api/issues/{issue['identifier']}").json()["cycle_id"] == cycle["id"]
+
+    page.goto(f"{base_url}/#/cycles?team={team['key']}")
+    page.wait_for_selector("[data-cycle] .row")
+    page.locator("[data-cycle] .del-cycle").click()
+    page.locator("[role=dialog]").get_by_role("button", name="Delete").click()
+    page.wait_for_selector("[data-cycle]", state="detached")
+    assert httpx.get(f"{base_url}/api/cycles", params={"team": team["key"]}).json() == []
+    assert httpx.get(f"{base_url}/api/issues/{issue['identifier']}").json()["cycle_id"] is None
 
 
 def test_database_page_copies_data_and_refuses_a_second_copy(page, base_url, team, tmp_path):

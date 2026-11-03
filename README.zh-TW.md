@@ -97,7 +97,7 @@ Issue 與專案的說明、留言和文件都支援 **Markdown**:標題、粗體
 
 - 側邊欄的 **Toggle theme** 可切換淺色和深色。
 - 使用者和標籤目前沒有操作畫面,請透過 [REST API](#rest-api) 建立(示範資料已有使用者 *Me*、*Alex* 與三個標籤)。
-  Cycle 目前同樣只有 API。
+- **Cycles** 頁面(側邊欄):依團隊新增、改名、改日期、刪除 Cycle;刪除時其下 Issue 會保留。在 Issue 的 **Cycle** 欄位可把它放進某個 Cycle。
 - 你的資料就是那一個 SQLite 檔案。複製它就是備份,刪掉它就是重來。
 
 ## Docker
@@ -127,6 +127,8 @@ docker run -d --init -p 127.0.0.1:8000:8000 -p 127.0.0.1:8765:8765 -v local-line
 | -- | -- | -- |
 | `LOCAL_LINEAR_DB` | `sqlite:///local_linear.db` | 資料庫網址:SQLite(預設)或 PostgreSQL,見[資料庫](#資料庫)。SQLite 預設路徑相對於你啟動程式的目錄。 |
 | `LOCAL_LINEAR_SEED` | `1` | 設成 `0` 則在空資料庫上不建立示範資料。 |
+| `LOCAL_LINEAR_TOKEN` | (無) | 網頁、REST API 與 MCP HTTP 端點共用的選用密鑰。設定後請求必須帶 `Authorization: Bearer <token>`;瀏覽器先開一次 `/login?token=<token>` 取得 cookie。缺少或錯誤回 `401`。**綁到非本機位址時務必設定。** |
+| `LOCAL_LINEAR_ALLOW_COPY` | `1` | 設成 `0` 則完全停用 `POST /api/database/copy`(資料庫頁的複製功能)。 |
 | `LOCAL_LINEAR_ALLOWED_HOSTS` | (無) | 除了 `127.0.0.1`、`localhost`、`[::1]` 之外,網頁和 MCP 伺服器還接受的主機名稱(逗號分隔)。其他 `Host` 標頭的請求會得到 `421`,避免其他網站透過 DNS 重新綁定操作沒有登入的 API。若你用別的名稱(例如區網位址)開啟應用,請設定它。 |
 
 ## 資料庫
@@ -151,11 +153,10 @@ uv run local-linear
 
 注意事項:
 
-- **目前沒有資料表結構的遷移(migration)機制**:缺少的表會自動建立,但已存在資料庫的結構變更不會處理。
-  在循環(cycle)加入 `UNIQUE (team_id, number)` 規則之前建立的資料庫沒有這條限制,同時建立兩個循環仍可能拿到相同編號;要補上可執行 `CREATE UNIQUE INDEX cycles_team_number ON cycles (team_id, number)`(若已有重複編號會失敗)。
+- 啟動時會自動套用**結構遷移**(有編號的步驟,記錄在 `schema_migrations` 表)。目前它會替在循環(cycle)加入 `UNIQUE (team_id, number)` 規則之前建立的資料庫補上索引 `cycles_team_number`,並先把重複的循環編號重新編號。其他結構變更尚未處理。
 - **在 SQLite 與 PostgreSQL 之間搬資料**:點側邊欄的 **Database**,貼上一個全新、*空的*資料庫網址,按 *Copy data*(等同 `POST /api/database/copy`)。
   全部資料(含 id)在同一個交易中複製;目標必須是空的(所以請在它第一次啟動前複製,或用 `LOCAL_LINEAR_SEED=0` 啟動)。
-  伺服器仍使用原本的資料庫:要切換請用新網址設定 `LOCAL_LINEAR_DB` 後重啟。此頁面和整個應用一樣沒有登入,請只綁定在 `127.0.0.1`。
+  伺服器仍使用原本的資料庫:要切換請用新網址設定 `LOCAL_LINEAR_DB` 後重啟。未設定 `LOCAL_LINEAR_TOKEN` 時此頁面沒有登入,請只綁定在 `127.0.0.1`(或設定 token,或 `LOCAL_LINEAR_ALLOW_COPY=0`)。
 - 網頁版和 MCP server 同時建立 Issue 時,編號(`ENG-12`)仍會保持唯一:每個編號都由一次對團隊計數器的原子更新(atomic update)取得(SQLite 3.35 以上,或 PostgreSQL)。
 
 使用 Docker 時,再加上 PostgreSQL 的覆寫檔(資料庫跑在自己的容器和 volume 裡,不會對外開放主機埠):
@@ -211,10 +212,16 @@ curl -X POST $BASE/api/labels -H "$JSON" -d '{"name":"Bug","color":"#eb5757"}'
 | `list_teams` / `create_team` | 列出團隊與代號 / 建立團隊(`ENG`) |
 | `create_project` / `update_project` | 建立專案(team、name、summary、description、status、priority、color、lead、起訖日期) / 修改上述任一欄位 |
 | `list_projects` / `get_project` | 列出專案與進度 / 取得單一專案(含里程碑與文件) |
+| `delete_project` | 永久刪除專案及其里程碑與文件(Issue 保留) |
+| `create_milestone` / `delete_milestone` | 為專案新增里程碑 / 刪除里程碑(id 在 `get_project` 內) |
+| `create_document` / `update_document` / `delete_document` | 建立 Markdown 文件(可放進專案) / 修改標題或內容 / 刪除 |
 | `create_issue` / `update_issue` | 建立 Issue(回傳如 `ENG-12`) / 修改標題、說明、**狀態**、優先度、**標籤**、負責人、專案、預估、到期日 |
 | `get_issue` / `list_issues` | 取得單一 Issue(含留言與子 Issue) / 列出與搜尋(可依團隊、專案、文字、狀態篩選,可設 `limit`) |
+| `list_cycles` / `create_cycle` | 列出 Cycle(`id`、編號、日期) / 為團隊建立 Cycle |
+| `update_cycle` / `delete_cycle` | 改名或改日期 / 刪除 Cycle(其下 Issue 保留)。`create_issue` / `update_issue` 可帶 `cycle_id`(0 代表移出) |
 | `add_comment` / `delete_issue` | 留言 / 永久刪除 Issue |
-| `list_labels` / `create_label` | 列出或建立標籤 |
+| `delete_comment` | 刪除留言(id 在 `get_issue` 內) |
+| `list_labels` / `create_label` / `delete_label` | 列出、建立或刪除標籤 |
 
 Issue 以編號指定(`ENG-12`)。狀態和標籤用**名稱**指定(`"In Progress"`、`["Bug"]`,也可以用狀態類型如 `"started"`),
 不分大小寫。不存在的狀態、標籤、使用者或日期會直接回錯誤並列出可用的值,不會被靜默忽略。`update_issue` 只會改你傳入的欄位;
@@ -300,4 +307,4 @@ LOCAL_LINEAR_TEST_DB=postgresql://user:password@localhost:5432/local_linear_test
 - 單人使用,沒有登入或權限;「Signed in as」只決定留言的作者。
 - Markdown 的任務清單勾選框是唯讀的,要改文字才能勾選;原始 HTML 只會以文字顯示。
 - 沒有即時協作、通知和 Git 整合。
-- 使用者、標籤和 Cycle 目前只能透過 API 管理。
+- 使用者和標籤目前只能透過 API 管理。

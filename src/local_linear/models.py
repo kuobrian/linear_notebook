@@ -1,6 +1,6 @@
 from datetime import date, datetime, timezone
 
-from sqlalchemy import Column, Date, DateTime, ForeignKey, Integer, String, Table, Text, TypeDecorator, UniqueConstraint
+from sqlalchemy import Column, Date, DateTime, ForeignKey, Index, Integer, String, Table, Text, TypeDecorator, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .db import Base
@@ -119,7 +119,8 @@ class Milestone(Base):
 
 class Cycle(Base):
     __tablename__ = "cycles"
-    __table_args__ = (UniqueConstraint("team_id", "number"),)
+    # A named index (not an inline constraint) so the migration in db.py can add the same thing to old databases.
+    __table_args__ = (Index("cycles_team_number", "team_id", "number", unique=True),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
     team_id: Mapped[int] = mapped_column(ForeignKey("teams.id", ondelete="CASCADE"))

@@ -8,8 +8,10 @@ import subprocess
 import sys
 import time
 
+import httpx
 import pytest
 from mcp.client import Client
+from mcp.client.streamable_http import create_mcp_http_client, streamable_http_client
 
 
 def _free_port() -> int:
@@ -18,13 +20,17 @@ def _free_port() -> int:
         return s.getsockname()[1]
 
 
-@pytest.fixture()
-def http_server(tmp_path):
+@pytest.fixture(params=[""], ids=["open"])
+def http_server(tmp_path, request):
     db = tmp_path / "http.db"
     port = _free_port()
+    env = {**__import__("os").environ, "LOCAL_LINEAR_DB": f"sqlite:///{db.as_posix()}"}
+    env.pop("LOCAL_LINEAR_TOKEN", None)
+    if request.param:
+        env["LOCAL_LINEAR_TOKEN"] = request.param
     proc = subprocess.Popen(
         [sys.executable, "-m", "local_linear.mcp_server", "--transport", "http", "--port", str(port)],
-        env={**__import__("os").environ, "LOCAL_LINEAR_DB": f"sqlite:///{db.as_posix()}"},
+        env=env,
         stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
     )
     try:
@@ -64,3 +70,17 @@ def test_create_project_over_http(http_server):
     assert project["name"] == "Over HTTP" and project["status"] == "started"
     rows = sqlite3.connect(db).execute("select name, status, priority from projects").fetchall()
     assert rows == [("Over HTTP", "started", 2)]
+
+
+@pytest.mark.parametrize("http_server", ["s3cret"], indirect=True)
+def test_token_is_enforced_over_http(http_server):
+    url, _ = http_server
+
+    async def run():
+        http = create_mcp_http_client(headers={"Authorization": "Bearer s3cret"})
+        async with Client(streamable_http_client(url, http_client=http)) as client:
+            return {t.name for t in (await client.list_tools()).tools}
+
+    assert "create_project" in asyncio.run(run())
+    for headers in ({}, {"Authorization": "Bearer wrong"}):
+        assert httpx.post(url, json={}, headers=headers).status_code == 401

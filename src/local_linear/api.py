@@ -1,3 +1,4 @@
+import os
 import re
 from datetime import datetime, timezone
 from urllib.parse import unquote
@@ -617,6 +618,27 @@ def create_cycle(body: s.CycleIn, db: Session = Depends(get_session)):
     raise HTTPException(409, "Could not pick a cycle number, please try again")
 
 
+@router.patch("/cycles/{cycle_id}", response_model=s.CycleOut)
+def update_cycle(cycle_id: int, body: s.CyclePatch, db: Session = Depends(get_session)):
+    cycle = _get(db, m.Cycle, cycle_id, "Cycle")
+    data = body.model_dump(exclude_unset=True)
+    _reject_nulls(data, ("starts_at", "ends_at"))
+    if data.get("ends_at", cycle.ends_at) < data.get("starts_at", cycle.starts_at):
+        raise HTTPException(422, "ends_at must not be before starts_at")
+    for field, value in data.items():
+        setattr(cycle, field, value)
+    db.commit()
+    return cycle
+
+
+@router.delete("/cycles/{cycle_id}", status_code=204)
+def delete_cycle(cycle_id: int, db: Session = Depends(get_session)):
+    """Issues in the cycle are kept; the database clears their cycle_id (ON DELETE SET NULL)."""
+    db.delete(_get(db, m.Cycle, cycle_id, "Cycle"))
+    db.commit()
+    return Response(status_code=204)
+
+
 # ---- database --------------------------------------------------------------
 @router.get("/database")
 def database_info(db: Session = Depends(get_session)):
@@ -633,6 +655,8 @@ def database_info(db: Session = Depends(get_session)):
 def copy_to_database(body: s.DatabaseCopyIn, db: Session = Depends(get_session)):
     """Copy all data into another, empty database (SQLite or PostgreSQL). The server keeps using
     the current one: restart it with LOCAL_LINEAR_DB set to the new URL to switch."""
+    if os.getenv("LOCAL_LINEAR_ALLOW_COPY", "1") == "0":
+        raise HTTPException(403, "Copying is disabled (LOCAL_LINEAR_ALLOW_COPY=0)")
     url = normalize_url(body.url.strip())
     try:
         backend = make_url(url).get_backend_name()

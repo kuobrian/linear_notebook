@@ -49,8 +49,31 @@ def test_tools_are_registered():
     assert {
         "list_teams", "create_team", "list_labels", "create_label", "create_project", "update_project",
         "list_projects", "get_project", "create_issue", "update_issue", "get_issue", "list_issues",
-        "add_comment", "delete_issue",
+        "add_comment", "delete_issue", "list_cycles", "create_cycle", "update_cycle", "delete_cycle",
+        "create_document", "update_document", "delete_document", "create_milestone", "delete_milestone",
+        "delete_project", "delete_comment", "delete_label",
     } <= names
+
+
+def test_cycle_tools_create_edit_assign_and_delete(factory):
+    cycle = structured(call("create_cycle", team="demo", starts_at="2026-11-02", ends_at="2026-11-15", name="Sprint 1"))
+    assert cycle["number"] == 2 and cycle["name"] == "Sprint 1"  # the seed has cycle 1
+    assert structured(call("list_cycles", team="demo"))[0]["id"] == cycle["id"]  # newest first
+
+    assert structured(call("update_cycle", cycle_id=cycle["id"], name="", ends_at="2026-11-20"))["name"] is None
+    bad = call("update_cycle", cycle_id=cycle["id"], ends_at="2026-10-01")
+    assert bad.is_error and "ends_at must not be before starts_at" in bad.content[0].text
+    assert call("update_cycle", cycle_id=cycle["id"]).is_error  # nothing to update
+
+    issue = structured(call("create_issue", team="demo", title="planned", cycle_id=cycle["id"]))
+    assert issue["cycle_id"] == cycle["id"]
+    assert structured(call("update_issue", issue=issue["identifier"], cycle_id=0))["cycle_id"] is None
+    assert structured(call("update_issue", issue=issue["identifier"], cycle_id=cycle["id"]))["cycle_id"] == cycle["id"]
+
+    assert structured(call("delete_cycle", cycle_id=cycle["id"])) == {"deleted": cycle["id"]}
+    assert cycle["id"] not in [c["id"] for c in structured(call("list_cycles"))]
+    assert structured(call("get_issue", issue=issue["identifier"]))["cycle_id"] is None
+    assert call("delete_cycle", cycle_id=cycle["id"]).is_error
 
 
 def test_create_project_persists_and_is_visible(factory):
@@ -196,6 +219,43 @@ def test_comment_get_and_delete_issue(factory):
         assert db.scalar(select(m.Comment)) is None  # comments are deleted with the issue
 
 
+def test_documents_milestones_and_deletes(factory):
+    doc = structured(call("create_document", title="Spec", content="# Hi", project_id=1))
+    assert doc["project_id"] == 1 and "<h1>" in doc["content_html"]
+    assert structured(call("update_document", document_id=doc["id"], content="new"))["content"] == "new"
+    assert structured(call("update_document", document_id=doc["id"], title="Spec 2"))["content"] == "new"  # kept
+    assert call("update_document", document_id=doc["id"]).is_error  # nothing to update
+    assert call("create_document", title="x", project_id=999).is_error
+    assert structured(call("delete_document", document_id=doc["id"])) == {"deleted": doc["id"]}
+    assert call("delete_document", document_id=doc["id"]).is_error
+
+    ms = structured(call("create_milestone", project_id=1, name="Beta", target_date="2026-12-01"))
+    assert ms["name"] == "Beta" and ms["target_date"] == "2026-12-01"
+    assert "Beta" in [x["name"] for x in structured(call("get_project", project_id=1))["milestones"]]
+    assert call("create_milestone", project_id=999, name="x").is_error
+    assert call("create_milestone", project_id=1, name="x", target_date="soon").is_error
+    assert structured(call("delete_milestone", milestone_id=ms["id"])) == {"deleted": ms["id"]}
+    assert call("delete_milestone", milestone_id=ms["id"]).is_error
+
+    structured(call("create_issue", team="DEMO", title="commented"))
+    comment = structured(call("add_comment", issue="DEMO-6", body="bye"))
+    assert structured(call("delete_comment", comment_id=comment["id"])) == {"deleted": comment["id"]}
+    assert structured(call("get_issue", issue="DEMO-6"))["comments"] == []
+    assert call("delete_comment", comment_id=comment["id"]).is_error
+
+    label = structured(call("create_label", name="Temp"))
+    structured(call("update_issue", issue="DEMO-6", labels=["Temp"]))
+    assert structured(call("delete_label", label_id=label["id"])) == {"deleted": label["id"]}
+    assert structured(call("get_issue", issue="DEMO-6"))["labels"] == []
+    assert call("delete_label", label_id=label["id"]).is_error
+
+    assert structured(call("delete_project", project_id=1)) == {"deleted": 1}
+    assert call("get_project", project_id=1).is_error
+    assert structured(call("get_issue", issue="DEMO-6"))["identifier"] == "DEMO-6"  # issues survive
+    with Session(factory.kw["bind"]) as db:
+        assert db.scalar(select(m.Milestone)) is None and db.scalar(select(m.Document)) is None
+
+
 def test_labels_and_list_issues_filters(factory):
     assert {x["name"] for x in structured(call("list_labels"))} == {"Bug", "Feature", "Improvement"}
     assert structured(call("create_label", name="Urgent", color="#ff0000"))["color"] == "#ff0000"
@@ -221,6 +281,8 @@ def test_update_project(factory):
     assert res["name"] == "Getting started"  # untouched
     cleared = structured(call("update_project", project_id=1, lead="", target_date=""))
     assert cleared["lead"] is None and cleared["target_date"] is None
+    structured(call("update_project", project_id=1, start_date="2026-05-01"))
+    assert structured(call("update_project", project_id=1, start_date=""))["start_date"] is None
     assert call("update_project", project_id=1, status="bogus").is_error
     assert call("update_project", project_id=99, name="x").is_error
     assert "Nothing to update" in call("update_project", project_id=1).content[0].text

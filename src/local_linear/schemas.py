@@ -260,6 +260,12 @@ class CycleIn(BaseModel):
     ends_at: date
 
 
+class CyclePatch(BaseModel):
+    name: str | None = Field(default=None, max_length=100)
+    starts_at: date | None = None
+    ends_at: date | None = None
+
+
 class DocumentIn(BaseModel):
     title: str = Field(min_length=1, max_length=300)
     content: str = ""

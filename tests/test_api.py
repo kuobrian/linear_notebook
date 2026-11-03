@@ -152,6 +152,22 @@ def test_cycles_number_per_team(client, team):
     assert client.post("/api/cycles", json=bad).status_code == 422
 
 
+def test_cycle_edit_and_delete_keep_the_issues(client, team):
+    cycle = client.post("/api/cycles", json={"team": "ENG", "starts_at": "2026-01-01", "ends_at": "2026-01-14"}).json()
+    issue = client.post("/api/issues", json={"team": "ENG", "title": "in cycle", "cycle_id": cycle["id"]}).json()
+
+    r = client.patch(f"/api/cycles/{cycle['id']}", json={"name": "Sprint", "ends_at": "2026-01-21"})
+    assert r.status_code == 200 and r.json()["name"] == "Sprint" and r.json()["ends_at"] == "2026-01-21"
+    assert client.patch(f"/api/cycles/{cycle['id']}", json={"name": None}).json()["name"] is None
+    for bad in ({"ends_at": "2025-12-31"}, {"starts_at": "2026-02-01"}, {"starts_at": None}):
+        assert client.patch(f"/api/cycles/{cycle['id']}", json=bad).status_code == 422
+    assert client.patch("/api/cycles/9999", json={"name": "x"}).status_code == 404
+
+    assert client.delete(f"/api/cycles/{cycle['id']}").status_code == 204
+    assert client.delete(f"/api/cycles/{cycle['id']}").status_code == 404
+    assert client.get("/api/issues/" + issue["identifier"]).json()["cycle_id"] is None
+
+
 def test_meta_and_index(client, team):
     meta = client.get("/api/meta").json()
     assert meta["teams"][0]["key"] == "ENG" and meta["priorities"][1]["name"] == "Urgent"
@@ -330,3 +346,104 @@ def test_estimate_must_fit_the_database_column(client, team):
     assert client.patch("/api/issues/ENG-1", json={"estimate": 2**31}).status_code == 422
     assert client.patch("/api/issues/ENG-1", json={"estimate": 2**31 - 1}).status_code == 200
 
+
+
+# ---- coverage gaps (KUO-12): filters, deletes, lists, conflicts ------------------------------
+def titles(client, **params):
+    r = client.get("/api/issues", params=params)
+    assert r.status_code == 200, r.text
+    return {i["title"] for i in r.json()}
+
+
+def test_issue_filters_return_exactly_the_matching_issues(client, team):
+    ann = client.post("/api/users", json={"name": "Ann"}).json()
+    project = client.post("/api/projects", json={"team": "ENG", "name": "P"}).json()
+    ms = client.post(f"/api/projects/{project['id']}/milestones", json={"name": "M1"}).json()
+    cycle = client.post("/api/cycles", json={"team": "ENG", "starts_at": "2026-01-01", "ends_at": "2026-01-14"}).json()
+    parent = make_issue(client, title="parent")
+    make_issue(client, title="child", parent_id=parent["id"])
+    make_issue(client, title="assigned", assignee_id=ann["id"])
+    make_issue(client, title="milestoned", project_id=project["id"], milestone_id=ms["id"])
+    make_issue(client, title="cycled", cycle_id=cycle["id"])
+    done = make_issue(client, title="done", status_id=status_id(team, "completed"))
+
+    assert titles(client, parent_id=parent["id"]) == {"child"}
+    assert titles(client, assignee_id=ann["id"]) == {"assigned"}
+    assert titles(client, milestone_id=ms["id"]) == {"milestoned"}
+    assert titles(client, cycle_id=cycle["id"]) == {"cycled"}
+    assert titles(client, status_id=done["status"]["id"]) == {"done"}
+    assert titles(client, status_id=done["status"]["id"], cycle_id=cycle["id"]) == set()  # filters combine
+    assert titles(client, parent_id=999) == set()  # a valid but unused id matches nothing
+
+
+def test_deleting_labels_milestones_and_documents(client, team):
+    label = client.post("/api/labels", json={"name": "Temp"}).json()
+    issue = make_issue(client, label_ids=[label["id"]])
+    assert client.delete(f"/api/labels/{label['id']}").status_code == 204
+    assert client.get(f"/api/issues/{issue['identifier']}").json()["labels"] == []
+    assert client.delete(f"/api/labels/{label['id']}").status_code == 404
+
+    project = client.post("/api/projects", json={"team": "ENG", "name": "P"}).json()
+    ms = client.post(f"/api/projects/{project['id']}/milestones", json={"name": "M1"}).json()
+    assert client.delete(f"/api/milestones/{ms['id']}").status_code == 204
+    assert client.delete(f"/api/milestones/{ms['id']}").status_code == 404
+    assert client.get(f"/api/projects/{project['id']}").json()["milestones"] == []
+
+    doc = client.post("/api/documents", json={"title": "D", "project_id": project["id"]}).json()
+    assert client.delete(f"/api/documents/{doc['id']}").status_code == 204
+    assert client.delete(f"/api/documents/{doc['id']}").status_code == 404
+    assert client.get(f"/api/documents/{doc['id']}").status_code == 404
+
+
+def test_document_list_filter_and_partial_update(client, team):
+    project = client.post("/api/projects", json={"team": "ENG", "name": "P"}).json()
+    inside = client.post("/api/documents", json={"title": "in", "content": "body", "project_id": project["id"]}).json()
+    client.post("/api/documents", json={"title": "loose"})
+    assert {d["title"] for d in client.get("/api/documents").json()} == {"in", "loose"}
+    assert [d["title"] for d in client.get("/api/documents", params={"project_id": project["id"]}).json()] == ["in"]
+    assert client.post("/api/documents", json={"title": "x", "project_id": 999}).status_code == 404
+
+    url = f"/api/documents/{inside['id']}"
+    assert client.patch(url, json={"title": "renamed"}).json()["content"] == "body"  # content untouched
+    assert client.patch(url, json={"content": "new"}).json()["title"] == "renamed"  # title untouched
+    assert client.patch(url, json={"title": None, "content": None}).json()["content"] == "new"  # nulls are ignored
+    assert client.patch("/api/documents/999", json={"title": "x"}).status_code == 404
+
+
+def test_cycle_list_and_team_filter(client, team):
+    client.post("/api/teams", json={"key": "OPS", "name": "Ops"})
+    body = {"starts_at": "2026-01-01", "ends_at": "2026-01-14"}
+    client.post("/api/cycles", json={**body, "team": "ENG"})
+    client.post("/api/cycles", json={**body, "team": "ENG"})
+    client.post("/api/cycles", json={**body, "team": "OPS"})
+    assert len(client.get("/api/cycles").json()) == 3
+    eng = client.get("/api/cycles", params={"team": "eng"}).json()
+    assert [c["number"] for c in eng] == [2, 1]  # newest first
+    assert len(client.get("/api/cycles", params={"team": "OPS"}).json()) == 1
+    assert client.get("/api/cycles", params={"team": "NOPE"}).status_code == 404
+
+
+def test_project_status_filter(client, team):
+    client.post("/api/projects", json={"team": "ENG", "name": "A", "status": "started"})
+    client.post("/api/projects", json={"team": "ENG", "name": "B", "status": "paused"})
+
+    def names(**params):
+        return {x["name"] for x in client.get("/api/projects", params=params).json()}
+
+    assert names(status="started") == {"A"}
+    assert names(status="paused") == {"B"}
+    assert names(status="completed") == set()
+    assert names() == {"A", "B"}
+
+
+def test_duplicate_user_conflicts(client):
+    assert client.post("/api/users", json={"name": "Ann"}).status_code == 201
+    r = client.post("/api/users", json={"name": "Ann"})
+    assert r.status_code == 409 and "already exists" in r.json()["detail"]
+
+
+def test_copying_into_the_database_in_use_is_refused(client, team):
+    from conftest import TEST_DB
+
+    r = client.post("/api/database/copy", json={"url": TEST_DB or "sqlite://"})
+    assert r.status_code == 409 and "already using" in r.json()["detail"]

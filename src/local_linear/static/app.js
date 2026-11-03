@@ -154,6 +154,7 @@ function renderSidebar(route) {
     h("button", { class: "btn-new", onclick: () => openIssueModal() }, "New issue", h("kbd", {}, "C")),
     nav("All issues", "#/issues", (!page || page === "issues" || page === "issue") && !state.team),
     nav("Projects", "#/projects", page === "projects" || page === "project"),
+    nav("Cycles", "#/cycles", page === "cycles"),
     h("div", { class: "nav-label" }, "Teams"),
     ...state.meta.teams.map((t) =>
       nav(t.name, "#/issues?team=" + t.key, (page === "issues" || !page) && state.team === t.key, h("span", { class: "key" }, t.key))
@@ -325,6 +326,7 @@ async function renderIssue(route) {
   const issue = await api("/issues/" + ref);
   const team = teamById(issue.team_id);
   const projects = await api("/projects?team=" + team.key);
+  const cycles = await api("/cycles?team=" + team.key);
   const refresh = () => renderIssue(parseRoute());
   const patch = async (body) => { await api("/issues/" + ref, { method: "PATCH", body }); refresh(); };
 
@@ -400,11 +402,57 @@ async function renderIssue(route) {
         prop("Priority", select(state.meta.priorities.map((p) => [p.value, p.name]), issue.priority, (v) => patch({ priority: +v }))),
         prop("Assignee", select([["", "Unassigned"], ...state.meta.users.map((u) => [u.id, u.name])], issue.assignee ? issue.assignee.id : "", (v) => patch({ assignee_id: v ? +v : null }))),
         prop("Project", select([["", "No project"], ...projects.map((p) => [p.id, p.name])], issue.project_id || "", (v) => patch({ project_id: v ? +v : null, milestone_id: null }))),
+        prop("Cycle", select([["", "No cycle"], ...cycles.map((c) => [c.id, cycleLabel(c)])], issue.cycle_id || "", (v) => patch({ cycle_id: v ? +v : null }))),
         prop("Estimate", h("input", { class: "field", type: "number", min: "0", value: issue.estimate ?? "",
           onchange: (e) => patch({ estimate: e.target.value === "" ? null : +e.target.value }) })),
         prop("Due date", h("input", { class: "field", type: "date", value: issue.due_date || "",
           onchange: (e) => patch({ due_date: e.target.value || null }) })),
         prop("Labels", labelToggles))));
+}
+
+// ---- cycles ----------------------------------------------------------------
+const cycleLabel = (c) => `Cycle ${c.number}${c.name ? " · " + c.name : ""} (${fmtDate(c.starts_at)} – ${fmtDate(c.ends_at)})`;
+
+async function renderCycles(route) {
+  state.team = route.query.get("team") || state.team;
+  renderSidebar(route);
+  const cycles = await api("/cycles" + (state.team ? "?team=" + state.team : ""));
+  const refresh = () => renderCycles(parseRoute());
+
+  const teamSel = select(state.meta.teams.map((t) => [t.key, t.name]), teamKey(), () => {});
+  const name = h("input", { class: "field", placeholder: "Name (optional)", id: "cycle-name" });
+  const start = h("input", { class: "field", type: "date", id: "cycle-start" });
+  const end = h("input", { class: "field", type: "date", id: "cycle-end" });
+  const create = h("button", { class: "btn primary", onclick: async () => {
+    if (!start.value || !end.value) return toast("Pick a start and an end date", true);
+    await api("/cycles", { method: "POST", body: { team: teamSel.value, name: name.value.trim() || null, starts_at: start.value, ends_at: end.value } });
+    refresh();
+  } }, "Add cycle");
+
+  const card = async (c) => {
+    const issues = await api("/issues?cycle_id=" + c.id + "&order_by=priority");
+    const patch = async (body) => { await api("/cycles/" + c.id, { method: "PATCH", body }); refresh(); };
+    return h("div", { class: "doc", "data-cycle": c.id },
+      h("div", { class: "doc-row" },
+        h("strong", {}, `Cycle ${c.number}`),
+        h("input", { class: "field cycle-name", placeholder: "Name", value: c.name || "",
+          onchange: (e) => patch({ name: e.target.value.trim() || null }) }),
+        h("input", { class: "field cycle-start", type: "date", value: c.starts_at, onchange: (e) => e.target.value && patch({ starts_at: e.target.value }) }),
+        h("input", { class: "field cycle-end", type: "date", value: c.ends_at, onchange: (e) => e.target.value && patch({ ends_at: e.target.value }) }),
+        h("span", { style: "color:var(--muted)" }, `${issues.length} issue${issues.length === 1 ? "" : "s"}`),
+        h("button", { class: "back del-cycle", title: "Delete cycle", onclick: async () => {
+          if (!await confirmDialog(`Delete cycle ${c.number}? Its issues are kept, they just leave the cycle. This cannot be undone.`)) return;
+          await api("/cycles/" + c.id, { method: "DELETE" });
+          toast(`Deleted cycle ${c.number}`);
+          refresh();
+        } }, "✕")),
+      issues.map(issueRow));
+  };
+
+  $("#main").replaceChildren(
+    h("div", { class: "page-header" }, h("h1", {}, "Cycles")),
+    h("div", { class: "ms-row" }, teamSel, name, start, end, create),
+    ...(cycles.length ? await Promise.all(cycles.map(card)) : [h("div", { class: "empty" }, "No cycles yet.")]));
 }
 
 // ---- projects --------------------------------------------------------------
@@ -675,6 +723,7 @@ async function route() {
   const [page] = r.parts;
   try {
     if (page === "issue") await renderIssue(r);
+    else if (page === "cycles") await renderCycles(r);
     else if (page === "projects") await renderProjects(r);
     else if (page === "project") await renderProject(r);
     else if (page === "database") await renderDatabase(r);

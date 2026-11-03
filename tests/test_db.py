@@ -84,3 +84,29 @@ def test_concurrent_cycle_creation_gets_unique_consecutive_numbers(tmp_path):
 
     with factory() as db:
         assert sorted(db.scalars(select(m.Cycle.number))) == list(range(1, 13))
+
+
+def test_old_database_gets_the_cycle_index_and_duplicate_numbers_are_fixed():
+    from sqlalchemy import inspect, text
+    from sqlalchemy.exc import IntegrityError
+
+    engine = fresh_engine()
+    factory = sessionmaker(bind=engine, expire_on_commit=False)
+    with factory() as db:
+        team = api.create_team(s.TeamIn(key="ENG", name="Engineering"), db)
+        # shape of a database created before the unique index existed
+        db.execute(text("DROP INDEX cycles_team_number"))
+        db.execute(text("DROP TABLE schema_migrations"))
+        db.add_all(m.Cycle(team_id=team.id, number=n, starts_at=date(2026, 1, 1), ends_at=date(2026, 1, 14))
+                   for n in (1, 2, 2))
+        db.commit()
+
+    init_db(engine)  # what starting the app does
+
+    with factory() as db:
+        assert sorted(db.scalars(select(m.Cycle.number))) == [1, 2, 3]
+        db.add(m.Cycle(team_id=team.id, number=1, starts_at=date(2026, 1, 1), ends_at=date(2026, 1, 14)))
+        with pytest.raises(IntegrityError):
+            db.commit()
+    assert "cycles_team_number" in {i["name"] for i in inspect(engine).get_indexes("cycles")}
+    init_db(engine)  # running again changes nothing

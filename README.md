@@ -111,7 +111,8 @@ description or issue ID, then **Enter**).
 
 - The sidebar's **Toggle theme** switches between light and dark.
 - Users and labels have no screens yet. Create them through the [REST API](#rest-api) (the demo data
-  includes the users *Me* and *Alex* and three labels). Cycles are also API-only for now.
+  includes the users *Me* and *Alex* and three labels).
+- **Cycles** page (sidebar): add, rename, re-date and delete cycles per team; deleting one keeps its issues. Put an issue in a cycle from its **Cycle** field.
 - Your data is the single SQLite file. Copy it to back up, delete it to start over.
 
 ## Docker
@@ -126,8 +127,7 @@ docker compose up --build -d
 - MCP endpoint: `http://127.0.0.1:8765/mcp` (register with `claude mcp add --transport http local-linear http://127.0.0.1:8765/mcp`)
 - Data lives in the `local-linear-data` volume (`/data/local_linear.db`), so it survives restarts and rebuilds.
 
-Ports are published on `127.0.0.1` only, because the MCP endpoint has no authentication; do not
-expose 8765 to a network you do not trust. Without Compose:
+Ports are published on `127.0.0.1` only. To expose them, set `LOCAL_LINEAR_TOKEN` (compose passes it through); without it the MCP endpoint has no authentication. Without Compose:
 
 ```bash
 docker build -t local-linear .
@@ -142,6 +142,8 @@ Both servers share one database file. If either stops, the container exits (and 
 | -- | -- | -- |
 | `LOCAL_LINEAR_DB` | `sqlite:///local_linear.db` | Database URL: SQLite (default) or PostgreSQL, see [Database](#database). The default SQLite path is relative to the directory you start the app from. |
 | `LOCAL_LINEAR_SEED` | `1` | Set to `0` to skip creating demo data on an empty database. |
+| `LOCAL_LINEAR_TOKEN` | (none) | Optional shared secret for the web app, REST API and MCP HTTP endpoint. When set, requests need `Authorization: Bearer <token>`; in a browser open `/login?token=<token>` once to get a cookie. Wrong or missing token gives `401`. **Set it whenever you bind to a non-local address.** |
+| `LOCAL_LINEAR_ALLOW_COPY` | `1` | Set to `0` to disable `POST /api/database/copy` (the Database page's copy) entirely. |
 | `LOCAL_LINEAR_ALLOWED_HOSTS` | (none) | Extra host names, comma separated, the web app and MCP server answer to besides `127.0.0.1`, `localhost` and `[::1]`. Requests with any other `Host` header get `421`, which stops other websites from driving the (login-free) API through DNS rebinding. Set it if you open the app by another name, e.g. a LAN address. |
 
 ## Database
@@ -168,15 +170,12 @@ start, and demo data is added to an empty database unless `LOCAL_LINEAR_SEED=0`.
 
 Things to know:
 
-- There are **no schema migrations** yet: tables are created if missing, but changing the schema of an
-  existing database is not handled. Databases created before the `UNIQUE (team_id, number)` rule on cycles lack it, so
-  two cycles created at the same moment can still get the same number there; to add it, run
-  `CREATE UNIQUE INDEX cycles_team_number ON cycles (team_id, number)` (it fails if duplicates already exist).
+- **Schema migrations** are applied automatically at startup (numbered steps recorded in a `schema_migrations` table). Today that means databases created before the `UNIQUE (team_id, number)` rule on cycles get it as the index `cycles_team_number`; any duplicate cycle numbers are renumbered first. Other schema changes are not handled.
 - **Moving data between SQLite and PostgreSQL**: open **Database** in the sidebar, paste the URL of a new,
   *empty* database and press *Copy data* (same as `POST /api/database/copy`). Everything is copied in one
   transaction with its ids; the target must be empty (so copy before the first start on it, or start it with
   `LOCAL_LINEAR_SEED=0`). The server keeps using its current database: restart it with `LOCAL_LINEAR_DB` set to the
-  new URL to switch. The page has no login, like the rest of the app, so keep it on `127.0.0.1`.
+  new URL to switch. Without `LOCAL_LINEAR_TOKEN` the page has no login, so keep it on `127.0.0.1` (or set the token, or `LOCAL_LINEAR_ALLOW_COPY=0`).
 - Issue numbers (`ENG-12`) stay unique when the web app and the MCP server create issues at the same
   time: each number is handed out by one atomic update of the team's counter (SQLite 3.35 or newer, or PostgreSQL).
 
@@ -238,10 +237,16 @@ see it in the UI.
 | `list_teams` / `create_team` | list teams and their keys / create a team (`ENG`) |
 | `create_project` / `update_project` | create a project (team, name, summary, description, status, priority, color, lead, start/target date) / change any of those fields |
 | `list_projects` / `get_project` | list projects with progress / one project with milestones and documents |
+| `delete_project` | permanently delete a project, its milestones and documents (issues are kept) |
+| `create_milestone` / `delete_milestone` | add a milestone to a project / delete one (ids are in `get_project`) |
+| `create_document` / `update_document` / `delete_document` | create a Markdown document (optionally in a project) / change title or content / delete it |
 | `create_issue` / `update_issue` | create an issue (returns e.g. `ENG-12`) / change title, description, **status**, priority, **labels**, assignee, project, estimate, due date |
 | `get_issue` / `list_issues` | one issue with comments and sub-issues / list and search (filter by team, project, text, status; `limit`) |
+| `list_cycles` / `create_cycle` | list cycles (`id`, number, dates) / create one for a team |
+| `update_cycle` / `delete_cycle` | rename or re-date a cycle / delete it (its issues are kept). `create_issue` / `update_issue` take `cycle_id` (0 clears it) |
 | `add_comment` / `delete_issue` | comment on an issue / permanently delete it |
-| `list_labels` / `create_label` | list or create labels |
+| `delete_comment` | delete a comment (id is in `get_issue`) |
+| `list_labels` / `create_label` / `delete_label` | list, create or delete labels |
 
 Issues are addressed by identifier (`ENG-12`). Status and labels are given **by name** (`"In Progress"`,
 `["Bug"]`; a status type such as `"started"` also works), case-insensitively. An unknown status, label,
@@ -288,8 +293,9 @@ claude mcp add --transport http local-linear http://127.0.0.1:8765/mcp
 ```
 
 Other clients that support streamable HTTP just need the same URL. The server binds to `127.0.0.1`
-only by default. There is **no authentication**: if you pass `--host 0.0.0.0` (a warning is printed),
-anyone who can reach the port can read and change your workspace, so only do that on a trusted network.
+only by default. Set `LOCAL_LINEAR_TOKEN` and clients must send `Authorization: Bearer <token>` (`claude mcp add --transport http --header "Authorization: Bearer <token>" ...`).
+Without it there is **no authentication**: if you pass `--host 0.0.0.0` (a warning is printed),
+anyone who can reach the port can read and change your workspace, so set the token or only do that on a trusted network.
 
 Then ask the assistant, for example: *"Create a project called Billing revamp in team ENG, started,
 targeting 2026-12-31."*
@@ -335,4 +341,4 @@ The concurrency test of issue numbering runs on SQLite too (in a temporary file)
 - Single user, no login or permissions; "Signed in as" only chooses who comments are attributed to.
 - Markdown task-list checkboxes are read-only; edit the text to tick them. Raw HTML is shown as text.
 - No real-time collaboration, notifications or Git integration.
-- Users, labels and cycles can only be managed through the API for now.
+- Users and labels can only be managed through the API for now.

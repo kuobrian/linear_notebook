@@ -24,6 +24,7 @@ from sqlalchemy.orm import Session
 from . import api
 from . import models as m
 from . import schemas as s
+from .auth import token, token_ok
 from .db import SessionLocal, init_db
 from .hosts import allowed_hosts
 
@@ -226,6 +227,126 @@ def get_project(project_id: int) -> dict:
         return _json(api.get_project(project_id, db))
 
 
+@mcp.tool()
+def delete_label(label_id: int) -> dict:
+    """Permanently delete a label (id from list_labels); issues lose it. Cannot be undone."""
+    with _db() as db:
+        api.delete_label(label_id, db)
+        return {"deleted": label_id}
+
+
+@mcp.tool()
+def delete_project(project_id: int) -> dict:
+    """Permanently delete a project with its milestones and documents. Its issues are kept. Cannot be undone."""
+    with _db() as db:
+        api.delete_project(project_id, db)
+        return {"deleted": project_id}
+
+
+# ---- milestones and documents ----------------------------------------------
+@mcp.tool()
+def create_milestone(project_id: int, name: str, description: str = "", target_date: str | None = None) -> dict:
+    """Add a milestone to a project. Returns it with its id (also listed by get_project).
+
+    Args:
+        project_id: Project id (see list_projects).
+        target_date: ISO date, e.g. "2026-12-31".
+    """
+    with _db() as db:
+        body = s.MilestoneIn(name=name, description=description,
+                             target_date=_date(target_date, "target_date") if target_date else None)
+        return _json(api.create_milestone(project_id, body, db))
+
+
+@mcp.tool()
+def delete_milestone(milestone_id: int) -> dict:
+    """Permanently delete a milestone (id from get_project). Its issues are kept. Cannot be undone."""
+    with _db() as db:
+        api.delete_milestone(milestone_id, db)
+        return {"deleted": milestone_id}
+
+
+@mcp.tool()
+def create_document(title: str, content: str = "", project_id: int | None = None) -> dict:
+    """Create a document (Markdown content), optionally inside a project. Returns it with its id."""
+    with _db() as db:
+        body = s.DocumentIn(title=title, content=content, project_id=project_id)
+        return _json(s.DocumentOut.model_validate(api.create_document(body, db)))
+
+
+@mcp.tool()
+def update_document(document_id: int, title: str | None = None, content: str | None = None) -> dict:
+    """Change a document's title and/or content (the new content replaces the old). Only passed fields change."""
+    fields = {k: v for k, v in (("title", title), ("content", content)) if v is not None}
+    if not fields:
+        raise ToolError("Nothing to update: pass at least one field")
+    with _db() as db:
+        return _json(s.DocumentOut.model_validate(api.update_document(document_id, s.DocumentPatch(**fields), db)))
+
+
+@mcp.tool()
+def delete_document(document_id: int) -> dict:
+    """Permanently delete a document (id from get_project or create_document). Cannot be undone."""
+    with _db() as db:
+        api.delete_document(document_id, db)
+        return {"deleted": document_id}
+
+
+# ---- cycles ----------------------------------------------------------------
+@mcp.tool()
+def list_cycles(team: str | None = None) -> list[dict]:
+    """List cycles (newest first), optionally for one team key. Use a cycle's `id` in the other cycle tools
+    and in create_issue / update_issue."""
+    with _db() as db:
+        return [_json(s.CycleOut.model_validate(c)) for c in api.list_cycles(team, db)]
+
+
+@mcp.tool()
+def create_cycle(team: str, starts_at: str, ends_at: str, name: str | None = None) -> dict:
+    """Create a cycle. Its number is the team's next free one.
+
+    Args:
+        team: Team key, e.g. "ENG".
+        starts_at: ISO date, e.g. "2026-11-02".
+        ends_at: ISO date on or after starts_at.
+        name: Optional name.
+    """
+    with _db() as db:
+        body = s.CycleIn(team=team, name=name, starts_at=_date(starts_at, "starts_at"), ends_at=_date(ends_at, "ends_at"))
+        return _json(s.CycleOut.model_validate(api.create_cycle(body, db)))
+
+
+@mcp.tool()
+def update_cycle(cycle_id: int, name: str | None = None, starts_at: str | None = None, ends_at: str | None = None) -> dict:
+    """Change a cycle. Only the fields you pass are changed.
+
+    Args:
+        cycle_id: Cycle id (see list_cycles).
+        name: New name, or "" to clear it.
+        starts_at: ISO date.
+        ends_at: ISO date, on or after the start.
+    """
+    fields: dict = {}
+    if name is not None:
+        fields["name"] = name or None
+    if starts_at is not None:
+        fields["starts_at"] = _date(starts_at, "starts_at")
+    if ends_at is not None:
+        fields["ends_at"] = _date(ends_at, "ends_at")
+    if not fields:
+        raise ToolError("Nothing to update: pass at least one field")
+    with _db() as db:
+        return _json(s.CycleOut.model_validate(api.update_cycle(cycle_id, s.CyclePatch(**fields), db)))
+
+
+@mcp.tool()
+def delete_cycle(cycle_id: int) -> dict:
+    """Permanently delete a cycle. Its issues are kept but leave the cycle. Cannot be undone."""
+    with _db() as db:
+        api.delete_cycle(cycle_id, db)
+        return {"deleted": cycle_id}
+
+
 # ---- issues ----------------------------------------------------------------
 @mcp.tool()
 def create_issue(
@@ -240,6 +361,7 @@ def create_issue(
     estimate: int | None = None,
     due_date: str | None = None,
     parent: str | None = None,
+    cycle_id: int | None = None,
 ) -> dict:
     """Create an issue. Returns it including its identifier, e.g. ENG-12.
 
@@ -256,6 +378,7 @@ def create_issue(
         estimate: Estimate points.
         due_date: ISO date, e.g. "2026-12-31".
         parent: Identifier of the parent issue, making this a sub-issue (e.g. "ENG-3").
+        cycle_id: Cycle to put the issue in (see list_cycles).
     """
     with _db() as db:
         team_row = api._team(db, team)
@@ -263,7 +386,7 @@ def create_issue(
             team=team, title=title, description=description, priority=priority, estimate=estimate,
             status_id=_status(team_row, status).id if status else None,
             label_ids=_label_ids(db, labels) if labels else [],
-            assignee_id=_user_id(db, assignee), project_id=project_id,
+            assignee_id=_user_id(db, assignee), project_id=project_id, cycle_id=cycle_id,
             due_date=_date(due_date, "due_date") if due_date else None,
             parent_id=api._issue(db, _ref(parent)).id if parent else None,
         )
@@ -282,6 +405,7 @@ def update_issue(
     project_id: int | None = None,
     estimate: int | None = None,
     due_date: str | None = None,
+    cycle_id: int | None = None,
 ) -> dict:
     """Change an issue. Only the fields you pass are changed.
 
@@ -292,6 +416,7 @@ def update_issue(
         labels: The complete list of label names (replaces the current labels; [] removes all).
         assignee: Name of an existing user, or "" to unassign.
         project_id: Project id, or 0 to remove the issue from its project.
+        cycle_id: Cycle id (see list_cycles), or 0 to remove the issue from its cycle.
         due_date: ISO date, or "" to clear.
     """
     issue = _ref(issue)
@@ -310,6 +435,8 @@ def update_issue(
             fields["assignee_id"] = _user_id(db, assignee)
         if project_id is not None:
             fields["project_id"] = project_id or None
+        if cycle_id is not None:
+            fields["cycle_id"] = cycle_id or None
         if due_date is not None:
             fields["due_date"] = _date(due_date, "due_date") if due_date else None
         if not fields:
@@ -364,6 +491,14 @@ def add_comment(issue: str, body: str, author: str | None = None) -> dict:
 
 
 @mcp.tool()
+def delete_comment(comment_id: int) -> dict:
+    """Permanently delete a comment (id from get_issue). Cannot be undone."""
+    with _db() as db:
+        api.delete_comment(comment_id, db)
+        return {"deleted": comment_id}
+
+
+@mcp.tool()
 def delete_issue(issue: str) -> dict:
     """Permanently delete an issue (and its comments). Sub-issues are kept. Cannot be undone."""
     issue = _ref(issue)
@@ -382,6 +517,25 @@ def transport_security() -> TransportSecuritySettings:
     )
 
 
+def with_token(app):
+    """ASGI wrapper that answers 401 unless LOCAL_LINEAR_TOKEN is unset or sent as a Bearer token.
+
+    Pure ASGI, not BaseHTTPMiddleware, so streamed (SSE) responses are not buffered.
+    """
+    async def guarded(scope, receive, send):
+        if scope["type"] == "http":
+            headers = {k.decode().lower(): v.decode() for k, v in scope["headers"]}
+            if not token_ok(headers.get("authorization", ""), ""):
+                body = b"Unauthorized: send 'Authorization: Bearer <LOCAL_LINEAR_TOKEN>'"
+                await send({"type": "http.response.start", "status": 401,
+                            "headers": [(b"content-type", b"text/plain"), (b"content-length", str(len(body)).encode())]})
+                await send({"type": "http.response.body", "body": body})
+                return
+        await app(scope, receive, send)
+
+    return guarded
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(prog="local-linear-mcp", description="Local Linear MCP server")
     parser.add_argument("--transport", choices=["stdio", "http"], default="stdio",
@@ -393,12 +547,15 @@ def main(argv: list[str] | None = None) -> None:
 
     init_db()
     if args.transport == "http":
-        if args.host not in ("127.0.0.1", "localhost", "::1"):
-            # There is no authentication: anyone who can reach the port can read and write the workspace.
-            print(f"WARNING: serving without authentication on {args.host}; only do this on a trusted network.",
-                  file=sys.stderr)
-        mcp.run("streamable-http", host=args.host, port=args.port, streamable_http_path=args.path,
-                transport_security=transport_security())
+        if args.host not in ("127.0.0.1", "localhost", "::1") and not token():
+            # Without a token anyone who can reach the port can read and write the workspace.
+            print(f"WARNING: serving without authentication on {args.host}; set LOCAL_LINEAR_TOKEN "
+                  "or only do this on a trusted network.", file=sys.stderr)
+        import uvicorn
+
+        app = mcp.streamable_http_app(streamable_http_path=args.path, host=args.host,
+                                      transport_security=transport_security())
+        uvicorn.run(with_token(app), host=args.host, port=args.port, log_level="info")
     else:
         mcp.run("stdio")
 

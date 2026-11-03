@@ -4,9 +4,13 @@ services:
     init: true
     restart: unless-stopped
     ports:
-      # Bound to this machine only: the MCP endpoint has no authentication.
+      # Bound to this machine only: set LOCAL_LINEAR_TOKEN before exposing them.
       - "127.0.0.1:8000:8000"   # web app
       - "127.0.0.1:8765:8765"   # MCP over HTTP (/mcp)
+    environment:
+      # Set these in your shell or a .env file. With a token, the web app, REST API and MCP endpoint all require it.
+      LOCAL_LINEAR_TOKEN: ${LOCAL_LINEAR_TOKEN:-}
+      LOCAL_LINEAR_ALLOW_COPY: ${LOCAL_LINEAR_ALLOW_COPY:-1}
     volumes:
       - local-linear-data:/data
 
