@@ -1,6 +1,6 @@
-from conftest import status_id
+from conftest import USING_POSTGRES, fresh_engine, status_id
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 
 from local_linear import models as m
 from local_linear.db import make_engine
@@ -44,6 +44,46 @@ def _source(client):
     from local_linear.main import app
 
     return next(app.dependency_overrides[get_session]()).get_bind()
+
+
+@pytest.mark.skipif(not USING_POSTGRES, reason="needs LOCAL_LINEAR_TEST_DB to point at PostgreSQL")
+def test_copy_from_sqlite_into_postgres(tmp_path):
+    """The real use of "Copy data": ids, the parent link and the id sequences must survive the move."""
+    from fastapi.testclient import TestClient
+
+    from local_linear.db import get_session, init_db
+    from local_linear.main import app
+
+    source = make_engine(target_url(tmp_path, "source.db"))
+    init_db(source)
+    factory = sessionmaker(bind=source, expire_on_commit=False)
+
+    def override():
+        with factory() as session:
+            yield session
+
+    app.dependency_overrides[get_session] = override
+    try:
+        client = TestClient(app)
+        team = client.post("/api/teams", json={"key": "eng", "name": "Eng"}).json()
+        for name in ("Ann", "Bob"):
+            client.post("/api/users", json={"name": name})
+        a, b = make_issues(client, team)
+    finally:
+        app.dependency_overrides.clear()
+
+    target = fresh_engine()  # empty PostgreSQL database
+    try:
+        copied = copy_database(source, target)
+        assert copied == table_counts(target) == table_counts(source)
+        with Session(target) as db:
+            assert db.get(m.Issue, a["id"]).parent_id == b["id"]  # child id is lower than its parent's
+            db.add(m.User(name="Cleo"))  # would collide with Ann or Bob if the id sequence was not reset
+            db.commit()
+            assert db.scalar(select(m.User.id).where(m.User.name == "Cleo")) == 3
+    finally:
+        target.dispose()
+        source.dispose()
 
 
 def test_copy_refuses_a_target_that_already_has_data(client, team, tmp_path):

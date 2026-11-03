@@ -17,7 +17,7 @@ from .migrate import CopyError, copy_database, table_counts
 router = APIRouter(prefix="/api")
 
 # At most 9 digits: a longer number cannot be an issue number and would overflow the database driver.
-ISSUE_ID = re.compile(r"^([A-Za-z][A-Za-z0-9]*)-(\d{1,9})$")
+ISSUE_ID = re.compile(r"^([A-Za-z][A-Za-z0-9]*)-(\d{1,9})$", re.ASCII)
 
 # Foreign keys an issue may point at, checked before writing so a bad id is a 404, not a 500.
 ISSUE_REFS = {
@@ -66,7 +66,7 @@ def _reject_nulls(data: dict, fields: tuple[str, ...]) -> None:
 
 def _issue(db: Session, ref: str) -> m.Issue:
     ident = ISSUE_ID.match(ref)
-    if ref.isdigit() and len(ref) <= 9:
+    if ref.isascii() and ref.isdigit() and len(ref) <= 9:  # "²" is a digit to isdigit() but int() rejects it
         issue = db.get(m.Issue, int(ref))
     elif ident:
         issue = db.scalar(
@@ -84,6 +84,8 @@ def _issue(db: Session, ref: str) -> m.Issue:
 def _apply_status(issue: m.Issue, status: m.Status) -> None:
     if status.team_id != issue.team_id:
         raise HTTPException(422, "Status belongs to a different team")
+    if issue.status_id == status.id:  # same status again: keep the original completed/canceled time
+        return
     issue.status = status
     now = datetime.now(timezone.utc)
     issue.completed_at = now if status.type == "completed" else None
@@ -162,24 +164,31 @@ def _issues_out(db: Session, issues: list[m.Issue]) -> list[s.IssueOut]:
     return [_issue_out(i, subs, comments, db) for i in issues]
 
 
-def _progress(db: Session, project_id: int) -> s.ProjectProgress:
-    rows = db.execute(
-        select(m.Status.type, func.count())
-        .select_from(m.Issue)
-        .join(m.Status, m.Issue.status_id == m.Status.id)
-        .where(m.Issue.project_id == project_id)
-        .group_by(m.Status.type)
-    ).all()
-    by_type = dict(rows)
-    completed = by_type.get("completed", 0)
-    started = by_type.get("started", 0)
-    total = sum(n for t, n in by_type.items() if t != "canceled")
-    return s.ProjectProgress(
-        total=total, completed=completed, started=started, percent=round(completed / total * 100) if total else 0
-    )
+def _progress_by_project(db: Session, project_ids: list[int]) -> dict[int, s.ProjectProgress]:
+    """Progress of many projects in one query."""
+    counts: dict[int, dict[str, int]] = {pid: {} for pid in project_ids}
+    if project_ids:
+        rows = db.execute(
+            select(m.Issue.project_id, m.Status.type, func.count())
+            .select_from(m.Issue)
+            .join(m.Status, m.Issue.status_id == m.Status.id)
+            .where(m.Issue.project_id.in_(project_ids))
+            .group_by(m.Issue.project_id, m.Status.type)
+        ).all()
+        for pid, type_, n in rows:
+            counts[pid][type_] = n
+    out = {}
+    for pid, by_type in counts.items():
+        completed = by_type.get("completed", 0)
+        total = sum(n for t, n in by_type.items() if t != "canceled")
+        out[pid] = s.ProjectProgress(
+            total=total, completed=completed, started=by_type.get("started", 0),
+            percent=round(completed / total * 100) if total else 0,
+        )
+    return out
 
 
-def _project_out(db: Session, p: m.Project) -> s.ProjectOut:
+def _project_out(db: Session, p: m.Project, progress: s.ProjectProgress | None = None) -> s.ProjectOut:
     return s.ProjectOut(
         id=p.id,
         team_id=p.team_id,
@@ -192,7 +201,7 @@ def _project_out(db: Session, p: m.Project) -> s.ProjectOut:
         lead=s.UserOut.model_validate(p.lead) if p.lead else None,
         start_date=p.start_date,
         target_date=p.target_date,
-        progress=_progress(db, p.id),
+        progress=progress or _progress_by_project(db, [p.id])[p.id],
         created_at=p.created_at,
         updated_at=p.updated_at,
     )
@@ -345,8 +354,8 @@ def list_issues(
     if parent_id is not None:
         stmt = stmt.where(m.Issue.parent_id == parent_id)
     if q:
-        like = f"%{q.strip()}%"
-        conditions = [m.Issue.title.ilike(like), m.Issue.description.ilike(like)]
+        conditions = [m.Issue.title.icontains(q.strip(), autoescape=True),  # % and _ in q are plain characters
+                      m.Issue.description.icontains(q.strip(), autoescape=True)]
         ident = ISSUE_ID.match(q.strip())
         if ident:  # "DEMO-7" also finds that exact issue, whatever its title says
             team_ids = select(m.Team.id).where(func.upper(m.Team.key) == ident.group(1).upper())
@@ -465,12 +474,14 @@ def delete_comment(comment_id: int, db: Session = Depends(get_session)):
 # ---- projects / milestones / documents ------------------------------------
 @router.get("/projects", response_model=list[s.ProjectOut])
 def list_projects(team: str | None = None, status: str | None = None, db: Session = Depends(get_session)):
-    stmt = select(m.Project).order_by(m.Project.created_at.desc())
+    stmt = select(m.Project).options(selectinload(m.Project.lead)).order_by(m.Project.created_at.desc())
     if team:
         stmt = stmt.where(m.Project.team_id == _team(db, team).id)
     if status:
         stmt = stmt.where(m.Project.status == status)
-    return [_project_out(db, p) for p in db.scalars(stmt)]
+    projects = list(db.scalars(stmt))
+    progress = _progress_by_project(db, [p.id for p in projects])
+    return [_project_out(db, p, progress[p.id]) for p in projects]
 
 
 def _project_detail(db: Session, p: m.Project) -> s.ProjectDetailOut:
@@ -537,7 +548,7 @@ def delete_milestone(milestone_id: int, db: Session = Depends(get_session)):
 
 
 @router.get("/documents", response_model=list[s.DocumentOut])
-def list_documents(project_id: int | None = None, db: Session = Depends(get_session)):
+def list_documents(project_id: s.Id | None = None, db: Session = Depends(get_session)):
     stmt = select(m.Document).order_by(m.Document.updated_at.desc())
     if project_id is not None:
         stmt = stmt.where(m.Document.project_id == project_id)

@@ -263,6 +263,65 @@ def test_huge_or_invalid_ids_are_rejected_instead_of_crashing(client, team):
     assert client.patch("/api/issues/ENG-1", json={"label_ids": list(range(1, 300))}).status_code == 422
 
 
+def test_odd_digits_in_an_issue_reference_are_a_404_not_a_crash(client, team):
+    make_issue(client)
+    for ref in ("²", "٣", "ENG-٣", "１"):  # superscript, Arabic-Indic and full-width digits
+        assert client.get(f"/api/issues/{ref}").status_code == 404, ref
+
+
+def test_document_filter_rejects_huge_project_ids(client, team):
+    for value in (0, 2**31, 10**30):
+        assert client.get(f"/api/documents?project_id={value}").status_code == 422, value
+
+
+def test_search_treats_percent_and_underscore_as_plain_text(client, team):
+    for title in ("100% sure", "a_b", "axb", "plain"):
+        make_issue(client, title=title)
+
+    def found(q):
+        return sorted(i["title"] for i in client.get("/api/issues", params={"q": q}).json())
+
+    assert found("%") == ["100% sure"]
+    assert found("_") == ["a_b"]
+    assert found("a_b") == ["a_b"]  # not "axb"
+    assert found("PLAIN") == ["plain"]  # still case-insensitive
+
+
+def test_setting_the_same_status_again_keeps_the_completion_time(client, team):
+    make_issue(client)
+    done = status_id(team, "completed")
+    first = client.patch("/api/issues/ENG-1", json={"status_id": done}).json()["completed_at"]
+    again = client.patch("/api/issues/ENG-1", json={"status_id": done, "title": "Renamed"}).json()
+    assert again["completed_at"] == first and again["title"] == "Renamed"
+    canceled = status_id(team, "canceled")
+    first = client.patch("/api/issues/ENG-1", json={"status_id": canceled}).json()["canceled_at"]
+    assert client.patch("/api/issues/ENG-1", json={"status_id": canceled}).json()["canceled_at"] == first
+
+
+def test_listing_projects_uses_a_fixed_number_of_queries(client, team):
+    from sqlalchemy import event
+
+    from local_linear.db import get_session
+    from local_linear.main import app
+
+    engine = next(app.dependency_overrides[get_session]()).get_bind()
+    statements = []
+    event.listen(engine, "before_cursor_execute", lambda *a: statements.append(a[2]))
+
+    lead = client.post("/api/users", json={"name": "Sam"}).json()
+
+    def queries_for(total):
+        while len(client.get("/api/projects").json()) < total:
+            name = f"P{len(client.get('/api/projects').json())}"
+            p = client.post("/api/projects", json={"team": "ENG", "name": name, "lead_id": lead["id"]}).json()
+            make_issue(client, project_id=p["id"])
+        statements.clear()
+        assert client.get("/api/projects").status_code == 200
+        return len(statements)
+
+    assert queries_for(2) == queries_for(6)  # in this order: the project count only grows
+
+
 def test_estimate_must_fit_the_database_column(client, team):
     # SQLite would store 2**40, but PostgreSQL cannot, which would break "Copy data" later
     for bad in (-1, 2**31, 10**30):
