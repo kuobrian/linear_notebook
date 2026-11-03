@@ -304,8 +304,11 @@ targeting 2026-12-31."*
 ## Development
 
 ```bash
-uv run pytest        # API, seed and MCP tests (in-memory SQLite)
+uv run pytest        # API, seed, MCP and browser tests (in-memory SQLite)
 ```
+
+`tests/test_ui.py` starts a real server and drives the web page with Playwright, using the Chrome or Edge
+already installed (nothing to download). If neither can be started, those tests are skipped.
 
 To run the same suite against PostgreSQL, give it an empty scratch database whose name contains
 `test` (every table in it is dropped and recreated for each test, so any other name is refused):

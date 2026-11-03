@@ -601,9 +601,11 @@ def create_cycle(body: s.CycleIn, db: Session = Depends(get_session)):
     if body.ends_at < body.starts_at:
         raise HTTPException(422, "ends_at must not be before starts_at")
     team_id = _team(db, body.team).id
-    # Next number = highest + 1. Two creators can pick the same one; the UNIQUE(team_id, number)
-    # constraint rejects the second, which then simply tries again with the new highest number.
+    # Next number = highest + 1. PostgreSQL: locking the team row makes creators queue, so none collides.
+    # SQLite ignores the lock; there the UNIQUE(team_id, number) constraint rejects the second creator,
+    # who tries again with the new highest number.
     for _ in range(5):
+        db.execute(select(m.Team.id).where(m.Team.id == team_id).with_for_update())
         number = (db.scalar(select(func.max(m.Cycle.number)).where(m.Cycle.team_id == team_id)) or 0) + 1
         cycle = m.Cycle(team_id=team_id, number=number, name=body.name, starts_at=body.starts_at, ends_at=body.ends_at)
         db.add(cycle)

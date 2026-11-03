@@ -270,8 +270,10 @@ claude mcp add --transport http local-linear http://127.0.0.1:8765/mcp
 ## 開發
 
 ```bash
-uv run pytest        # API、示範資料與 MCP 測試(記憶體內 SQLite)
+uv run pytest        # API、示範資料、MCP 與瀏覽器測試(記憶體內 SQLite)
 ```
+
+`tests/test_ui.py` 會啟動真正的伺服器,用 Playwright 操作網頁,使用本機已安裝的 Chrome 或 Edge(不需另外下載)。兩者都無法啟動時,這些測試會被跳過。
 
 要用 PostgreSQL 跑同一套測試,請給它一個**名稱含 `test`** 的空白測試資料庫(每個測試都會清空並重建裡面所有資料表,
 所以名稱不含 `test` 的資料庫會被拒絕):
