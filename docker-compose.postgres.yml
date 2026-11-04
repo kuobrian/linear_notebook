@@ -13,7 +13,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-local_linear}
       POSTGRES_DB: local_linear
     volumes:
-      - local-linear-pg:/var/lib/postgresql/data
+      - ./data/postgres:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U local_linear -d local_linear"]
       interval: 5s
@@ -26,6 +26,3 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-
-volumes:
-  local-linear-pg:

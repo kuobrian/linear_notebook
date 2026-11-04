@@ -12,7 +12,4 @@ services:
       LOCAL_LINEAR_TOKEN: ${LOCAL_LINEAR_TOKEN:-}
       LOCAL_LINEAR_ALLOW_COPY: ${LOCAL_LINEAR_ALLOW_COPY:-1}
     volumes:
-      - local-linear-data:/data
-
-volumes:
-  local-linear-data:
+      - ./data:/data

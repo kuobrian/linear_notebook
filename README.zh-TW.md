@@ -110,7 +110,7 @@ docker compose up --build -d
 
 - 網頁版:<http://127.0.0.1:8000>
 - MCP 端點:`http://127.0.0.1:8765/mcp`(用 `claude mcp add --transport http local-linear http://127.0.0.1:8765/mcp` 註冊)
-- 資料存在 `local-linear-data` 這個 volume(`/data/local_linear.db`),重啟或重新 build 都不會消失。
+- 資料存在 `docker-compose.yml` 旁邊的 `./data/`(`./data/local_linear.db`),重啟或重新 build 都不會消失。Linux 上這個資料夾要讓 uid 10001 可寫:`mkdir -p data && sudo chown 10001 data`。
 
 埠只開在 `127.0.0.1`,因為 MCP 端點沒有身分驗證,請不要把 8765 暴露到不信任的網路。不用 Compose 的話:
 

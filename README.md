@@ -125,7 +125,7 @@ docker compose up --build -d
 
 - Web app: <http://127.0.0.1:8000>
 - MCP endpoint: `http://127.0.0.1:8765/mcp` (register with `claude mcp add --transport http local-linear http://127.0.0.1:8765/mcp`)
-- Data lives in the `local-linear-data` volume (`/data/local_linear.db`), so it survives restarts and rebuilds.
+- Data lives in `./data/` next to `docker-compose.yml` (`./data/local_linear.db`), so it survives restarts and rebuilds. On Linux the folder must be writable by uid 10001: `mkdir -p data && sudo chown 10001 data`.
 
 Ports are published on `127.0.0.1` only. To expose them, set `LOCAL_LINEAR_TOKEN` (compose passes it through); without it the MCP endpoint has no authentication. Without Compose:
 

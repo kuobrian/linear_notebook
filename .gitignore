@@ -11,3 +11,4 @@ wheels/
 
 # local data
 *.db
+data/
