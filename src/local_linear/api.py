@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session, selectinload
 from . import markdown
 from . import models as m
 from . import schemas as s
+from .auth import token
 from .db import get_session, make_engine, normalize_url
 from .migrate import CopyError, copy_database, table_counts
 
@@ -315,6 +316,7 @@ def list_issues(
     project_id: s.Id | None = None,
     milestone_id: s.Id | None = None,
     cycle_id: s.Id | None = None,
+    in_cycle: bool = False,
     label_id: s.Id | None = None,
     priority: int | None = Query(default=None, ge=0, le=4),
     parent_id: s.Id | None = None,
@@ -348,6 +350,8 @@ def list_issues(
         stmt = stmt.where(m.Issue.milestone_id == milestone_id)
     if cycle_id is not None:
         stmt = stmt.where(m.Issue.cycle_id == cycle_id)
+    if in_cycle:  # one request for every cycle's issues, instead of one per cycle
+        stmt = stmt.where(m.Issue.cycle_id.is_not(None))
     if label_id is not None:
         stmt = stmt.where(m.Issue.labels.any(m.Label.id == label_id))
     if priority is not None:
@@ -640,13 +644,21 @@ def delete_cycle(cycle_id: int, db: Session = Depends(get_session)):
 
 
 # ---- database --------------------------------------------------------------
+def _location(url) -> str:
+    """The database URL without its password. A SQLite file shows only its name unless a token is set,
+    so an open server does not reveal where on disk it lives."""
+    if url.get_backend_name() == "sqlite" and url.database and not token():
+        url = url.set(database=url.database.replace("\\", "/").rsplit("/", 1)[-1])
+    return unquote(url.render_as_string(hide_password=True))  # unquote: C%3A/ -> C:/
+
+
 @router.get("/database")
 def database_info(db: Session = Depends(get_session)):
     """Which database this server is using (password hidden) and how many rows each table holds."""
     engine = db.get_bind()
     return {
         "kind": engine.dialect.name,
-        "location": unquote(engine.url.render_as_string(hide_password=True)),  # unquote: C%3A/ -> C:/
+        "location": _location(engine.url),
         "counts": table_counts(engine),
     }
 

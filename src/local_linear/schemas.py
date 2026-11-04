@@ -1,12 +1,22 @@
 from datetime import date, datetime
 from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, Field, computed_field
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, computed_field
 
 from . import markdown
 
 # A database id: positive and within a 32-bit column, so a huge number is a 422, not a driver error.
 Id = Annotated[int, Field(ge=1, le=2**31 - 1)]
+
+
+def _sane_date(d: date) -> date:
+    if not date(2000, 1, 1) <= d <= date(2100, 12, 31):
+        raise ValueError("date must be between 2000-01-01 and 2100-12-31")
+    return d
+
+
+# A planning date (cycle, project, milestone): 0001-01-01 or 9999-12-31 is a typo, not a plan.
+PlanDate = Annotated[date, AfterValidator(_sane_date)]
 
 
 class ORM(BaseModel):
@@ -231,8 +241,8 @@ class ProjectIn(BaseModel):
     priority: int = Field(default=0, ge=0, le=4)
     color: str = Field(default="#4cb782", max_length=20)
     lead_id: int | None = None
-    start_date: date | None = None
-    target_date: date | None = None
+    start_date: PlanDate | None = None
+    target_date: PlanDate | None = None
 
 
 class ProjectPatch(BaseModel):
@@ -243,27 +253,27 @@ class ProjectPatch(BaseModel):
     priority: int | None = Field(default=None, ge=0, le=4)
     color: str | None = Field(default=None, max_length=20)
     lead_id: int | None = None
-    start_date: date | None = None
-    target_date: date | None = None
+    start_date: PlanDate | None = None
+    target_date: PlanDate | None = None
 
 
 class MilestoneIn(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     description: str = ""
-    target_date: date | None = None
+    target_date: PlanDate | None = None
 
 
 class CycleIn(BaseModel):
     team: str
     name: str | None = Field(default=None, max_length=100)
-    starts_at: date
-    ends_at: date
+    starts_at: PlanDate
+    ends_at: PlanDate
 
 
 class CyclePatch(BaseModel):
     name: str | None = Field(default=None, max_length=100)
-    starts_at: date | None = None
-    ends_at: date | None = None
+    starts_at: PlanDate | None = None
+    ends_at: PlanDate | None = None
 
 
 class DocumentIn(BaseModel):

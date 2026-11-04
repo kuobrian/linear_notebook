@@ -4,7 +4,8 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, Request
-from fastapi.responses import FileResponse, PlainTextResponse, RedirectResponse
+from fastapi.middleware.gzip import GZipMiddleware
+from fastapi.responses import FileResponse, PlainTextResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from .api import router
@@ -27,17 +28,23 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(title="Local Linear", lifespan=lifespan)
 app.include_router(router)
+app.add_middleware(GZipMiddleware, minimum_size=1024)
+
+SECURITY_HEADERS = {"X-Content-Type-Options": "nosniff", "X-Frame-Options": "DENY", "Referrer-Policy": "no-referrer"}
 
 
 @app.middleware("http")
 async def reject_foreign_hosts(request: Request, call_next):
     if not host_allowed(request.headers.get("host", "")):
-        return PlainTextResponse("Invalid host header", status_code=421)
-    if request.url.path != "/login" and not token_ok(
+        response = PlainTextResponse("Invalid host header", status_code=421)
+    elif request.url.path != "/login" and not token_ok(
         request.headers.get("authorization", ""), request.cookies.get(COOKIE, "")
     ):
-        return PlainTextResponse("Unauthorized: open /login?token=<LOCAL_LINEAR_TOKEN>", status_code=401)
-    return await call_next(request)
+        response = PlainTextResponse("Unauthorized: open /login?token=<LOCAL_LINEAR_TOKEN>", status_code=401)
+    else:
+        response = await call_next(request)
+    response.headers.update(SECURITY_HEADERS)
+    return response
 
 
 @app.get("/login", include_in_schema=False)
@@ -69,6 +76,11 @@ CSP = (
     "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
     "img-src 'self' https: data:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
 )
+
+
+@app.get("/favicon.ico", include_in_schema=False)
+def favicon():
+    return Response(status_code=204)  # no icon, but no 404 in the browser console either
 
 
 @app.get("/", include_in_schema=False)

@@ -58,7 +58,8 @@ function toast(msg, error = false) {
   t.textContent = msg;
   t.className = "show" + (error ? " error" : "");
   clearTimeout(toast._t);
-  toast._t = setTimeout(() => (t.className = ""), 2600);
+  // the text goes after the 0.2s fade-out, so a hidden toast is not read out again by screen readers
+  toast._t = setTimeout(() => { t.className = ""; toast._t = setTimeout(() => (t.textContent = ""), 300); }, 2600);
 }
 
 async function api(path, opts = {}) {
@@ -71,10 +72,12 @@ async function api(path, opts = {}) {
     let detail = res.statusText;
     try {
       const j = await res.json();
-      detail = typeof j.detail === "string" ? j.detail : JSON.stringify(j.detail);
+      detail = typeof j.detail === "string" ? j.detail
+        : Array.isArray(j.detail) ? j.detail.map((d) => `${d.loc.slice(1).join(".")}: ${d.msg}`).join("; ")
+        : JSON.stringify(j.detail);
     } catch {}
     toast(detail, true);
-    throw new Error(detail);
+    throw Object.assign(new Error(detail), { status: res.status, shown: true });
   }
   return res.status === 204 ? null : res.json();
 }
@@ -84,7 +87,8 @@ const store = {
   set(k, v) { try { localStorage.setItem("ll." + k, JSON.stringify(v)); } catch {} },
 };
 
-const fmtDate = (iso) => (iso ? new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "");
+// The interface is English, so dates are too, whatever the browser's language is.
+const fmtDate = (iso) => (iso ? new Date(iso).toLocaleDateString("en", { month: "short", day: "numeric" }) : "");
 const initials = (name) => (name || "?").split(/\s+/).map((w) => w[0]).join("").slice(0, 2).toUpperCase();
 const avatar = (u) => (u ? h("span", { class: "avatar", title: u.name }, initials(u.name)) : null);
 
@@ -163,7 +167,7 @@ function renderSidebar(route) {
     h("div", { class: "spacer" }),
     state.meta.users.length > 0 && h("div", { class: "prop", style: "padding:0 8px 6px" },
       h("label", {}, "Signed in as"),
-      select(state.meta.users.map((u) => [u.id, u.name]), currentUser().id, (v) => store.set("me", +v), "field")),
+      select(state.meta.users.map((u) => [u.id, u.name]), currentUser().id, (v) => store.set("me", +v), "field", "Signed in as")),
     nav("Database", "#/database", page === "database"),
     h("button", { class: "nav-item", onclick: toggleTheme }, "Toggle theme")
   );
@@ -177,8 +181,9 @@ function toggleTheme() {
 }
 
 // ---- issues list / board ---------------------------------------------------
-function select(options, value, onchange, cls = "field") {
-  const el = h("select", { class: cls, onchange: (e) => onchange(e.target.value) },
+const ISSUE_LIMIT = 1000; // the most /api/issues returns
+function select(options, value, onchange, cls = "field", label = "") {
+  const el = h("select", { class: cls, "aria-label": label || null, onchange: (e) => onchange(e.target.value) },
     options.map(([v, label]) => h("option", { value: v, selected: String(v) === String(value) }, label)));
   return el;
 }
@@ -198,8 +203,10 @@ async function renderIssues(route) {
   else if (f.assignee) params.set("assignee_id", f.assignee);
   if (f.label) params.set("label_id", f.label);
   params.set("order_by", "priority");
+  params.set("limit", ISSUE_LIMIT);
 
   let issues = await api("/issues?" + params);
+  const truncated = issues.length >= ISSUE_LIMIT;
   if (state.tab === "active") issues = issues.filter((i) => ["unstarted", "started"].includes(i.status.type));
   if (state.tab === "backlog") issues = issues.filter((i) => i.status.type === "backlog");
 
@@ -215,18 +222,21 @@ async function renderIssues(route) {
       [["list", "List"], ["board", "Board"]].map(([k, label]) =>
         h("button", { class: state.view === k ? "active" : "", onclick: () => { state.view = k; store.set("view", k); rerender(); } }, label))));
 
-  const search = h("input", { type: "search", id: "search", placeholder: "Search title or ID (/)", value: f.q,
+  const search = h("input", { type: "search", id: "search", "aria-label": "Search issues", placeholder: "Search title or ID (/)", value: f.q,
     onkeydown: (e) => { if (e.key === "Enter") { f.q = e.target.value.trim(); rerender(); } } });
   const filters = h("div", { class: "filters" },
     search,
-    select([["", "Any priority"], ...state.meta.priorities.map((p) => [p.value, p.name])], f.priority, (v) => { f.priority = v; rerender(); }),
-    select([["", "Any assignee"], ["none", "Unassigned"], ...state.meta.users.map((u) => [u.id, u.name])], f.assignee, (v) => { f.assignee = v; rerender(); }),
-    select([["", "Any label"], ...state.meta.labels.map((l) => [l.id, l.name])], f.label, (v) => { f.label = v; rerender(); }));
+    select([["", "Any priority"], ...state.meta.priorities.map((p) => [p.value, p.name])], f.priority, (v) => { f.priority = v; rerender(); }, "field", "Priority"),
+    select([["", "Any assignee"], ["none", "Unassigned"], ...state.meta.users.map((u) => [u.id, u.name])], f.assignee, (v) => { f.assignee = v; rerender(); }, "field", "Assignee"),
+    select([["", "Any label"], ...state.meta.labels.map((l) => [l.id, l.name])], f.label, (v) => { f.label = v; rerender(); }, "field", "Label"));
 
   const body = issues.length === 0
     ? h("div", { class: "empty" }, "No issues. Press C to create one.")
     : state.view === "board" ? boardView(issues, rerender) : listView(issues);
-  main.replaceChildren(header, filters, body);
+  main.replaceChildren(header, filters,
+    truncated && h("div", { class: "hint", style: "padding:8px 20px;margin:0" },
+      `Showing the first ${ISSUE_LIMIT} issues. Search or filter to narrow the list.`),
+    body);
 }
 
 function statusesFor(issues) {
@@ -241,8 +251,12 @@ function labelChips(issue) {
   return issue.labels.map((l) => h("span", { class: "chip" }, h("span", { class: "dot", style: `background:${l.color}` }), l.name));
 }
 
+// A clickable div that the keyboard can reach and open with Enter.
+const opens = (hash) => ({ tabindex: "0", role: "link", onclick: () => go(hash),
+  onkeydown: (e) => { if (e.key === "Enter" && e.target === e.currentTarget) go(hash); } });
+
 function issueRow(i) {
-  return h("div", { class: "row", onclick: () => go("#/issue/" + i.identifier) },
+  return h("div", { class: "row", ...opens("#/issue/" + i.identifier) },
     priorityIcon(i.priority),
     h("span", { class: "ident" }, i.identifier),
     statusIcon(i.status.type, i.status.color),
@@ -309,7 +323,7 @@ function boardView(issues, rerender, opts = {}) {
       col.append(h("div", { class: "card", draggable: "true",
         ondragstart: (e) => { e.dataTransfer.setData("text/plain", i.identifier); e.currentTarget.classList.add("dragging"); },
         ondragend: (e) => e.currentTarget.classList.remove("dragging"),
-        onclick: () => go("#/issue/" + i.identifier) },
+        ...opens("#/issue/" + i.identifier) },
         h("div", { class: "top" }, priorityIcon(i.priority), i.identifier, h("span", { style: "margin-left:auto" }, avatar(i.assignee))),
         h("div", {}, i.title),
         i.labels.length > 0 && h("div", { class: "labels" }, labelChips(i))));
@@ -331,7 +345,7 @@ async function renderIssue(route) {
   // A rejected edit is already toasted by api(); re-rendering anyway puts the saved value back in the input.
   const patch = async (body) => { await api("/issues/" + ref, { method: "PATCH", body }).catch(() => {}); refresh(); };
 
-  const title = h("input", { class: "title-input", value: issue.title,
+  const title = h("input", { class: "title-input", "aria-label": "Title", maxlength: "500", value: issue.title,
     onblur: (e) => { const v = e.target.value.trim(); if (v && v !== issue.title) patch({ title: v }); } });
   const desc = mdBlock({ source: issue.description, html: issue.description_html, placeholder: "Add description…",
     onSave: (v) => patch({ description: v }) });
@@ -363,7 +377,10 @@ async function renderIssue(route) {
   } }, "Preview");
   const send = h("button", { class: "btn primary", onclick: postComment }, "Comment");
 
-  const prop = (label, node) => h("div", { class: "prop" }, h("label", {}, label), node);
+  const prop = (label, node) => {
+    if (node.matches("select, input")) node.setAttribute("aria-label", label);
+    return h("div", { class: "prop" }, h("label", {}, label), node);
+  };
   const labelToggles = h("div", { style: "display:flex;flex-wrap:wrap;gap:4px" },
     state.meta.labels.map((l) => {
       const on = issue.labels.some((x) => x.id === l.id);
@@ -375,7 +392,7 @@ async function renderIssue(route) {
   $("#main").replaceChildren(
     h("div", { class: "breadcrumb" },
       h("button", { class: "back", onclick: () => history.length > 1 ? history.back() : go("#/issues") }, "← Back"),
-      team.name, "›", issue.identifier,
+      `${team.name} › ${issue.identifier}`, // one string: separate text nodes in a flex row touch each other
       h("span", { class: "spacer", style: "flex:1" }),
       h("button", { class: "btn danger", onclick: async () => {
         if (!await confirmDialog(`Delete ${issue.identifier} "${issue.title}"? Its comments are deleted too, sub-issues are kept. This cannot be undone.`)) return;
@@ -394,7 +411,7 @@ async function renderIssue(route) {
         h("div", { class: "section-title" }, "Activity"),
         issue.comments.map((c) => h("div", { class: "comment" },
           h("div", { class: "who" }, avatar(c.author), c.author ? c.author.name : "Unknown",
-            h("span", {}, new Date(c.created_at).toLocaleString()),
+            h("span", {}, new Date(c.created_at).toLocaleString("en")),
             h("button", { class: "del", title: "Delete comment", onclick: async () => { if (!await confirmDialog("Delete this comment? This cannot be undone.")) return; await api("/comments/" + c.id, { method: "DELETE" }); refresh(); } }, "✕")),
           mdView(c.body_html, "body"))),
         h("div", { class: "composer" }, commentBox, previewBox, h("div", { style: "display:flex;gap:8px" }, previewBtn, send))),
@@ -420,26 +437,28 @@ async function renderCycles(route) {
   const cycles = await api("/cycles" + (state.team ? "?team=" + state.team : ""));
   const refresh = () => renderCycles(parseRoute());
 
-  const teamSel = select(state.meta.teams.map((t) => [t.key, t.name]), teamKey(), () => {});
-  const name = h("input", { class: "field", placeholder: "Name (optional)", id: "cycle-name" });
-  const start = h("input", { class: "field", type: "date", id: "cycle-start" });
-  const end = h("input", { class: "field", type: "date", id: "cycle-end" });
+  const teamSel = select(state.meta.teams.map((t) => [t.key, t.name]), teamKey(), () => {}, "field", "Team");
+  const name = h("input", { class: "field", placeholder: "Name (optional)", id: "cycle-name", "aria-label": "Cycle name" });
+  const start = h("input", { class: "field", type: "date", id: "cycle-start", "aria-label": "Start date", title: "Start date" });
+  const end = h("input", { class: "field", type: "date", id: "cycle-end", "aria-label": "End date", title: "End date" });
   const create = h("button", { class: "btn primary", onclick: async () => {
     if (!start.value || !end.value) return toast("Pick a start and an end date", true);
     await api("/cycles", { method: "POST", body: { team: teamSel.value, name: name.value.trim() || null, starts_at: start.value, ends_at: end.value } });
     refresh();
   } }, "Add cycle");
 
-  const card = async (c) => {
-    const issues = await api("/issues?cycle_id=" + c.id + "&order_by=priority");
+  // one request for all cycles, grouped here
+  const inCycles = cycles.length ? await api("/issues?in_cycle=true&order_by=priority&limit=" + ISSUE_LIMIT + (state.team ? "&team=" + state.team : "")) : [];
+  const card = (c) => {
+    const issues = inCycles.filter((i) => i.cycle_id === c.id);
     const patch = async (body) => { await api("/cycles/" + c.id, { method: "PATCH", body }).catch(() => {}); refresh(); };
     return h("div", { class: "doc", "data-cycle": c.id },
       h("div", { class: "doc-row" },
         h("strong", {}, `Cycle ${c.number}`),
-        h("input", { class: "field cycle-name", placeholder: "Name", value: c.name || "",
+        h("input", { class: "field cycle-name", placeholder: "Name", "aria-label": `Cycle ${c.number} name`, value: c.name || "",
           onchange: (e) => patch({ name: e.target.value.trim() || null }) }),
-        h("input", { class: "field cycle-start", type: "date", value: c.starts_at, onchange: (e) => e.target.value && patch({ starts_at: e.target.value }) }),
-        h("input", { class: "field cycle-end", type: "date", value: c.ends_at, onchange: (e) => e.target.value && patch({ ends_at: e.target.value }) }),
+        h("input", { class: "field cycle-start", type: "date", "aria-label": `Cycle ${c.number} start date`, title: "Start date", value: c.starts_at, onchange: (e) => e.target.value && patch({ starts_at: e.target.value }) }),
+        h("input", { class: "field cycle-end", type: "date", "aria-label": `Cycle ${c.number} end date`, title: "End date", value: c.ends_at, onchange: (e) => e.target.value && patch({ ends_at: e.target.value }) }),
         h("span", { style: "color:var(--muted)" }, `${issues.length} issue${issues.length === 1 ? "" : "s"}`),
         h("button", { class: "back del-cycle", title: "Delete cycle", onclick: async () => {
           if (!await confirmDialog(`Delete cycle ${c.number}? Its issues are kept, they just leave the cycle. This cannot be undone.`)) return;
@@ -452,8 +471,9 @@ async function renderCycles(route) {
 
   $("#main").replaceChildren(
     h("div", { class: "page-header" }, h("h1", {}, "Cycles")),
-    h("div", { class: "ms-row" }, teamSel, name, start, end, create),
-    ...(cycles.length ? await Promise.all(cycles.map(card)) : [h("div", { class: "empty" }, "No cycles yet.")]));
+    h("div", { class: "cycles-page" },
+      h("div", { class: "ms-row" }, teamSel, name, start, end, create),
+      ...(cycles.length ? cycles.map(card) : [h("div", { class: "empty" }, "No cycles yet.")])));
 }
 
 // ---- projects --------------------------------------------------------------
@@ -488,7 +508,10 @@ async function renderProject(route) {
   const refresh = () => renderProject(parseRoute());
   const patch = async (body) => { await api("/projects/" + id, { method: "PATCH", body }).catch(() => {}); refresh(); };
 
-  const field = (label, node) => h("div", { class: "prop" }, h("label", {}, label), node);
+  const field = (label, node) => {
+    node.setAttribute("aria-label", label);
+    return h("div", { class: "prop" }, h("label", {}, label), node);
+  };
   const desc = mdBlock({ source: p.description, html: p.description_html, placeholder: "Write a project description…",
     onSave: (v) => patch({ description: v }) });
 
@@ -594,13 +617,13 @@ function openIssueModal(defaults = {}) {
   let team = state.meta.teams.find((t) => t.key === key) || state.meta.teams[0];
   const chosenLabels = new Set();
 
-  const title = h("input", { class: "title-input", placeholder: "Issue title", autofocus: true });
-  const desc = h("textarea", { class: "field", placeholder: "Add description…" });
-  const teamSel = select(state.meta.teams.map((t) => [t.key, t.name]), team.key, () => {}, "field");
-  const statusSel = h("select", { class: "field" });
-  const prioSel = select(state.meta.priorities.map((p) => [p.value, p.name]), 0, () => {});
-  const assigneeSel = select([["", "Unassigned"], ...state.meta.users.map((u) => [u.id, u.name])], "", () => {});
-  const projectSel = h("select", { class: "field" });
+  const title = h("input", { class: "title-input", placeholder: "Issue title", "aria-label": "Issue title", maxlength: "500", autofocus: true });
+  const desc = h("textarea", { class: "field", placeholder: "Add description…", "aria-label": "Description" });
+  const teamSel = select(state.meta.teams.map((t) => [t.key, t.name]), team.key, () => {}, "field", "Team");
+  const statusSel = h("select", { class: "field", "aria-label": "Status" });
+  const prioSel = select(state.meta.priorities.map((p) => [p.value, p.name]), 0, () => {}, "field", "Priority");
+  const assigneeSel = select([["", "Unassigned"], ...state.meta.users.map((u) => [u.id, u.name])], "", () => {}, "field", "Assignee");
+  const projectSel = h("select", { class: "field", "aria-label": "Project" });
   const labelWrap = h("div", { class: "row2" }, state.meta.labels.map((l) =>
     h("button", { class: "chip toggle", type: "button", onclick: (e) => {
       chosenLabels.has(l.id) ? chosenLabels.delete(l.id) : chosenLabels.add(l.id);
@@ -661,9 +684,9 @@ function openTeamModal() {
 function openProjectModal() {
   const name = h("input", { class: "title-input", placeholder: "Project name" });
   const summary = h("input", { class: "field", placeholder: "Short summary" });
-  const teamSel = select(state.meta.teams.map((t) => [t.key, t.name]), teamKey(), () => {});
-  const statusSel = select(state.meta.project_statuses.map((s) => [s, s]), "planned", () => {});
-  const lead = select([["", "No lead"], ...state.meta.users.map((u) => [u.id, u.name])], "", () => {});
+  const teamSel = select(state.meta.teams.map((t) => [t.key, t.name]), teamKey(), () => {}, "field", "Team");
+  const statusSel = select(state.meta.project_statuses.map((s) => [s, s]), "planned", () => {}, "field", "Status");
+  const lead = select([["", "No lead"], ...state.meta.users.map((u) => [u.id, u.name])], "", () => {}, "field", "Lead");
   const start = h("input", { class: "field", type: "date" });
   const target = h("input", { class: "field", type: "date" });
   const submit = async () => {
@@ -731,8 +754,14 @@ async function route() {
     else await renderIssues(r);
   } catch (e) {
     if (!$("#toast.error")) toast(String(e.message || e), true);
+    $("#main").replaceChildren(h("div", { class: "empty" },
+      h("p", {}, e.status === 404 ? "Not found." : "Something went wrong."), h("p", {}, String(e.message || e)),
+      h("a", { href: "#/issues", style: "text-decoration:underline" }, "Back to all issues")));
   }
 }
+
+// api() has already toasted these; without this each one is also logged as an uncaught exception.
+window.addEventListener("unhandledrejection", (e) => { if (e.reason && e.reason.shown) e.preventDefault(); });
 
 document.addEventListener("keydown", (e) => {
   const tag = (e.target.tagName || "").toLowerCase();

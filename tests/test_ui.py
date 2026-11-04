@@ -309,14 +309,7 @@ def test_theme_choice_is_remembered(page, base_url, team):
     assert page.evaluate("document.documentElement.dataset.theme") == chosen
 
 
-# ---- known bugs (found by the browser QA pass) ------------------------------------------------
-# Each test reproduces a bug that is tracked in Linear and not fixed yet. xfail(strict=True) keeps CI
-# green now and turns red ("XPASS(strict)") the moment the bug is fixed, which is the cue to delete the
-# marker. `raises=AssertionError` means a timeout or a broken test still fails loudly.
-def known_bug(issue):
-    return pytest.mark.xfail(strict=True, raises=AssertionError, reason=issue)
-
-
+# ---- bugs found by the browser QA pass (Linear KUO-14 to KUO-21) --------------------------------
 def add_cycle(base_url, team, start="2026-01-01", end="2026-01-14"):
     r = httpx.post(base_url + "/api/cycles", json={"team": team["key"], "starts_at": start, "ends_at": end})
     assert r.status_code == 201, r.text
@@ -333,16 +326,15 @@ def accessible(page, selector):
     )
 
 
-@known_bug("KUO-14")
-def test_list_says_when_it_shows_only_part_of_the_issues(page, base_url, team):
-    with httpx.Client(base_url=base_url) as c:  # one connection: 501 requests take a few seconds
+def test_list_shows_more_than_500_issues_and_says_when_it_cuts_off(page, base_url, team):
+    with httpx.Client(base_url=base_url) as c:  # one connection: 1001 requests take several seconds
         status = next(s["id"] for s in team["statuses"] if s["type"] == "backlog")
-        for i in range(501):
+        for i in range(1001):
             assert c.post("/api/issues", json={"team": team["key"], "title": f"Bulk {i}", "status_id": status}).status_code == 201
     open_team(page, base_url, team)
     page.wait_for_selector(".row")
-    text = page.locator("#main").inner_text()
-    assert page.locator(".row").count() >= 501 or re.search(r"showing|more|truncat|first \d+|load", text, re.I)
+    assert page.locator(".row").count() == 1000  # not the old silent 500
+    assert "Showing the first 1000 issues" in page.locator("#main").inner_text()  # one issue is still hidden
 
 
 def test_rejected_cycle_edit_restores_the_input(page, base_url, team):
@@ -358,7 +350,6 @@ def test_rejected_cycle_edit_restores_the_input(page, base_url, team):
     playwright_api.expect(end).to_have_value(saved)  # the page re-renders and shows what is saved
 
 
-@known_bug("KUO-16")
 def test_validation_error_is_not_an_uncaught_exception(browser, base_url, team):
     context = browser.new_context(bypass_csp=True)  # not the `page` fixture: it fails the test on page errors
     page = context.new_page()
@@ -374,11 +365,15 @@ def test_validation_error_is_not_an_uncaught_exception(browser, base_url, team):
         page.wait_for_selector("#toast.error")
         page.wait_for_timeout(200)
         assert not errors
+        page.locator("#cycle-start").fill("1999-01-01")  # the API answers with a list of errors: show one sentence
+        page.locator("#cycle-end").fill("1999-02-01")
+        page.get_by_role("button", name="Add cycle").click()
+        playwright_api.expect(page.locator("#toast")).to_contain_text("between 2000-01-01 and 2100-12-31")
+        assert not re.search(r"[\[\]{}]", page.locator("#toast").inner_text())
     finally:
         context.close()
 
 
-@known_bug("KUO-17")
 def test_unknown_issue_shows_a_not_found_page(page, base_url, team):
     page.goto(f"{base_url}/#/cycles?team={team['key']}")
     page.wait_for_selector("#cycle-start")
@@ -387,7 +382,6 @@ def test_unknown_issue_shows_a_not_found_page(page, base_url, team):
     assert re.search(r"not found", page.locator("#main").inner_text(), re.I)  # not the stale Cycles page
 
 
-@known_bug("KUO-18")
 def test_cycles_page_inputs_have_accessible_names(page, base_url, team):
     add_cycle(base_url, team)
     page.goto(f"{base_url}/#/cycles?team={team['key']}")
@@ -395,7 +389,6 @@ def test_cycles_page_inputs_have_accessible_names(page, base_url, team):
     assert accessible(page, "#main input, #main select") == []
 
 
-@known_bug("KUO-19")
 def test_cycles_page_does_not_request_issues_per_cycle(page, base_url, team):
     for _ in range(5):
         add_cycle(base_url, team)
@@ -407,14 +400,12 @@ def test_cycles_page_does_not_request_issues_per_cycle(page, base_url, team):
     assert len(requests) <= 1
 
 
-@known_bug("KUO-20")
 def test_selects_have_accessible_names(page, base_url, team):
     add_issue(base_url, team, "First")
     open_team(page, base_url, team)
     assert accessible(page, "select") == []
 
 
-@known_bug("KUO-20")
 def test_issue_rows_are_keyboard_focusable(page, base_url, team):
     add_issue(base_url, team, "First")
     open_team(page, base_url, team)
@@ -423,7 +414,6 @@ def test_issue_rows_are_keyboard_focusable(page, base_url, team):
     assert row.get_attribute("tabindex") is not None or row.get_attribute("role") in ("button", "link")
 
 
-@known_bug("KUO-21")
 def test_dates_follow_the_interface_language(browser, base_url, team):
     context = browser.new_context(bypass_csp=True, locale="zh-TW")  # English interface, Chinese browser
     page = context.new_page()

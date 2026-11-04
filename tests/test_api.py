@@ -449,16 +449,7 @@ def test_copying_into_the_database_in_use_is_refused(client, team):
     assert r.status_code == 409 and "already using" in r.json()["detail"]
 
 
-# ---- known bugs (found by the browser QA pass), see the note above test_ui.py's known_bug --------
-# xfail(strict=True): green while the bug exists, red (XPASS) once it is fixed, then drop the marker.
-import pytest  # noqa: E402
-
-
-def known_bug(issue):
-    return pytest.mark.xfail(strict=True, raises=AssertionError, reason=issue)
-
-
-@known_bug("KUO-22")
+# ---- bugs found by the browser QA pass (Linear KUO-22 to KUO-24) --------------------------------
 def test_responses_carry_basic_security_headers(client):
     for path in ("/api/teams", "/static/app.js"):
         r = client.get(path)
@@ -466,17 +457,41 @@ def test_responses_carry_basic_security_headers(client):
         assert r.headers.get("referrer-policy"), path
 
 
-@known_bug("KUO-23")
 def test_cycle_dates_must_be_in_a_sane_range(client, team):
     body = {"team": "ENG", "starts_at": "0001-01-01", "ends_at": "9999-12-31"}
     assert client.post("/api/cycles", json=body).status_code == 422
 
 
-@known_bug("KUO-24")
 def test_favicon_does_not_404(client):
     assert client.get("/favicon.ico").status_code != 404
 
 
-@known_bug("KUO-24")
 def test_static_files_are_compressed(client):
     assert client.get("/static/app.js", headers={"Accept-Encoding": "gzip"}).headers.get("content-encoding") == "gzip"
+
+
+def test_in_cycle_filter_lists_only_issues_that_belong_to_a_cycle(client, team):
+    cycle = client.post("/api/cycles", json={"team": "ENG", "starts_at": "2026-01-01", "ends_at": "2026-01-14"}).json()
+    make_issue(client, title="planned", cycle_id=cycle["id"])
+    make_issue(client, title="loose")
+    assert titles(client, in_cycle="true") == {"planned"}
+
+
+def test_project_and_milestone_dates_must_be_in_a_sane_range(client, team):
+    assert client.post("/api/projects", json={"team": "ENG", "name": "P", "start_date": "0001-01-01"}).status_code == 422
+    project = client.post("/api/projects", json={"team": "ENG", "name": "P"}).json()
+    assert client.patch(f"/api/projects/{project['id']}", json={"target_date": "9999-12-31"}).status_code == 422
+    assert client.post(f"/api/projects/{project['id']}/milestones", json={"name": "M", "target_date": "9999-12-31"}).status_code == 422
+    assert client.patch(f"/api/projects/{project['id']}", json={"target_date": "2027-01-01"}).status_code == 200
+
+
+def test_database_page_shows_only_the_file_name_unless_a_token_is_set(monkeypatch):
+    from sqlalchemy.engine import make_url
+
+    from local_linear.api import _location
+
+    url = make_url("sqlite:///C:/Users/me/private/ll.db")
+    monkeypatch.delenv("LOCAL_LINEAR_TOKEN", raising=False)
+    assert _location(url) == "sqlite:///ll.db"
+    monkeypatch.setenv("LOCAL_LINEAR_TOKEN", "secret")
+    assert _location(url) == "sqlite:///C:/Users/me/private/ll.db"
